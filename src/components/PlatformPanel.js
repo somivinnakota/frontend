@@ -15,6 +15,31 @@ const PREFERRED_ORDER = ['impression', 'reach', 'view', 'visitor', 'click', 'rea
 const COLORS = ['#53266a', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626'];
 const HALF_YEAR_DAYS = 182;
 
+// The headline metrics shown as cards and charts, in this order. Each is found by its column name,
+// skipping the desktop/mobile, organic/sponsored and per-page splits. Everything else is listed
+// under "Show all metrics". A metric that isn't in the uploads is simply left out.
+const SPLITS = /desktop|mobile|organic|sponsored|auto-invited|overview|life|jobs|unique impressions/i;
+const HEADLINE = [
+  { label: 'Impressions', match: /impressions/i },
+  { label: 'Clicks', match: /clicks/i },
+  { label: 'Reactions', match: /reactions/i },
+  { label: 'Comments', match: /comments/i },
+  { label: 'Engagement rate', match: /engagement rate/i },
+  { label: 'New followers', match: /follower/i },
+  { label: 'Page views', match: /page views/i },
+  { label: 'Unique visitors', match: /unique visitors/i },
+];
+
+function pickHeadline(totals) {
+  const picked = [];
+  for (const h of HEADLINE) {
+    const candidates = totals.filter(m => h.match.test(m.label) && !SPLITS.test(m.label) && !picked.includes(m));
+    const best = candidates.find(m => /total/i.test(m.label)) || candidates[0];
+    if (best) picked.push({ ...best, label: h.label });
+  }
+  return picked;
+}
+
 const tooltipStyle = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--card)' };
 const axisTick = { fontSize: 10, fill: 'var(--muted-foreground)' };
 const sectionLabel = { fontSize: 10, color: 'var(--muted-foreground)', margin: '22px 0 10px', fontWeight: 600, letterSpacing: '0.1em' };
@@ -192,6 +217,7 @@ export default function PlatformPanel({ code, name, social, view = 'compare' }) 
   const [chosenBreakdown, setChosenBreakdown] = useState(null);
   const [chosenList, setChosenList] = useState(null);
   const [sortMeasure, setSortMeasure] = useState(null);
+  const [showOthers, setShowOthers] = useState(false);
 
   const data = useMemo(() => {
     const prefix = `${code}-`;
@@ -211,16 +237,17 @@ export default function PlatformPanel({ code, name, social, view = 'compare' }) 
       ? metrics.map(m => ({ ...m, ...lastTwelveMonths(m.rows, m.meta.aggregation, latest) }))
       : yearOnYear;
 
-    const headline = totals.filter(m => m.meta.primary !== false);
-    // Extra metrics only appear when they add something: not empty, and not just a copy of a
-    // headline figure (e.g. "organic followers" equals "new followers" when none are sponsored).
-    const extras = totals.filter(m => m.meta.primary === false && m.current
-      && !headline.some(h => h.current === m.current));
-    const shown = headline.length || extras.length ? [...headline, ...extras] : totals;
+    const picked = pickHeadline(totals);
+    const shown = picked.length ? picked : totals.filter(m => m.meta.primary !== false).slice(0, 8);
+    // The rest are available on request, without charts. Empty ones and copies of a headline
+    // figure (e.g. organic followers when none are sponsored) are left out.
+    const shownKeys = new Set(shown.map(m => m.key));
+    const others = totals.filter(m => !shownKeys.has(m.key) && m.current
+      && !shown.some(s => s.current === m.current));
     const breakdowns = Object.entries(social?.breakdowns || {}).filter(([k]) => k.startsWith(prefix)).map(([key, b]) => ({ key, ...b }));
     const lists = Object.entries(social?.items || {}).filter(([k]) => k.startsWith(prefix)).map(([key, l]) => ({ key, ...l }));
     const windowStart = latest ? (addDays(latest, -364) > earliest ? addDays(latest, -364) : earliest) : '';
-    return { metrics, shown, latest, windowStart, year, prevYear, rolling, breakdowns, lists };
+    return { metrics, shown, others, latest, windowStart, year, prevYear, rolling, breakdowns, lists };
   }, [code, name, social]);
 
   if (!data.metrics.length && !data.breakdowns.length && !data.lists.length) {
@@ -267,6 +294,18 @@ export default function PlatformPanel({ code, name, social, view = 'compare' }) 
           <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
             {data.shown.map(m => <MetricCard key={m.key} metric={m} rolling={data.rolling} prevYear={data.prevYear} />)}
           </div>
+          {data.others.length > 0 && (
+            <>
+              <button className="btn-secondary" style={{ fontSize: 11, marginBottom: 16 }} onClick={() => setShowOthers(!showOthers)}>
+                {showOthers ? 'Hide detailed metrics' : `Show ${data.others.length} more detailed metrics`}
+              </button>
+              {showOthers && (
+                <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
+                  {data.others.map(m => <MetricCard key={m.key} metric={m} rolling={data.rolling} prevYear={data.prevYear} />)}
+                </div>
+              )}
+            </>
+          )}
           {chartRows.map(row => (
             <div className="grid-2" key={row[0].key}>
               {row.map(m => (
