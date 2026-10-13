@@ -8,6 +8,7 @@ import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import SocialUpload from '../components/SocialUpload';
 import PlatformPanel from '../components/PlatformPanel';
+import MailchimpPanel from '../components/MailchimpPanel';
 import {
   MONTH_NAMES, withLabels, forYear, upToDay, sumValues, peakValue,
   aggregateByMonth, formatDayMonth, compactTick,
@@ -241,7 +242,7 @@ export default function SocialMedia() {
       </div>
 
       <div className="tab-row">
-        {['instagram', 'facebook', 'linkedin'].map(t => (
+        {['instagram', 'facebook', 'linkedin', 'mailchimp'].map(t => (
           <button key={t} onClick={() => setActiveTab(t)}
             className={`tab-btn${activeTab === t ? ' active' : ''}`}
             style={{ textTransform: 'capitalize' }}>
@@ -315,6 +316,8 @@ export default function SocialMedia() {
             {social && activeTab === 'linkedin' && (
         <PlatformPanel code="li" name="LinkedIn" social={social} view={view} />
       )}
+
+      {activeTab === 'mailchimp' && <MailchimpPanel />}
 
       <div style={{ marginTop: 24 }}>
         <SocialUpload onUploaded={loadSocial} startOpen={Boolean(social && !social.latestDate)} />
