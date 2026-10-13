@@ -1,23 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { withLabels, formatDayMonth, compactTick } from '../utils/social';
+import { MONTH_NAMES, withLabels, formatDayMonth, compactTick } from '../utils/social';
 
-// Shows any platform's uploaded data: headline metrics, trends, audience breakdowns and top posts.
-// Nothing here is specific to one platform's columns; it displays whatever the files contained.
+// Shows any platform's uploaded data in the same style as the Instagram and Facebook tabs.
+// The comparison is chosen from the data itself:
+// - Year on year: when the files go back far enough to cover 1 Jan to the latest day of last year.
+// - Last 12 months: otherwise. Cards show the 12-month total, and the % compares the most recent
+//   6 months with the 6 months before. Charts show the last 12 months in order.
 
-const PERIODS = [
-  { days: 30, label: 'Last 30 days' },
-  { days: 90, label: 'Last 90 days' },
-  { days: 365, label: 'Last 12 months' },
-];
 // Metrics whose names contain these words are shown first; everything else follows alphabetically.
 const PREFERRED_ORDER = ['impression', 'reach', 'view', 'visitor', 'click', 'reaction', 'like', 'comment', 'repost', 'share', 'engagement', 'follower', 'follow'];
+const COLORS = ['#53266a', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626'];
+const HALF_YEAR_DAYS = 182;
 
 const tooltipStyle = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--card)' };
 const axisTick = { fontSize: 10, fill: 'var(--muted-foreground)' };
 const sectionLabel = { fontSize: 10, color: 'var(--muted-foreground)', margin: '22px 0 10px', fontWeight: 600, letterSpacing: '0.1em' };
+const smallNote = { fontSize: 10, color: 'var(--muted-foreground)', marginTop: 2 };
 // Long post texts are cut to two lines; the full text shows on hover.
 const clampStyle = { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
 const selectStyle = {
@@ -25,7 +26,9 @@ const selectStyle = {
   fontFamily: 'inherit', color: 'var(--foreground)', background: 'var(--card)',
 };
 
+const pad = n => String(n).padStart(2, '0');
 const addDays = (iso, days) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+const fullDate = iso => `${formatDayMonth(iso)} ${iso.slice(0, 4)}`;
 
 function combine(rows, aggregation) {
   if (!rows.length) return null;
@@ -50,36 +53,142 @@ const rank = label => {
 // Tidies labels for display: "LinkedIn Clicks (total)" → "Clicks".
 const shortLabel = (label, name) => label.replace(new RegExp(`^${name}\\s+`, 'i'), '').replace(/\s*\(total\)$/i, '');
 
-function monthly(rows, aggregation) {
-  const groups = new Map();
-  for (const row of withLabels(rows)) {
-    const group = groups.get(row.monthKey) || { monthKey: row.monthKey, month: row.monthLabel, rows: [] };
-    group.rows.push(row);
-    groups.set(row.monthKey, group);
-  }
-  return [...groups.values()]
-    .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-    .map(g => ({ month: g.month, value: combine(g.rows, aggregation) }));
+const between = (rows, from, to) => rows.filter(r => r.date >= from && r.date <= to);
+
+// Like-for-like: 1 Jan up to this metric's latest day this year, against the same days last year.
+function yearToDate(rows, aggregation, year, prevYear) {
+  const current = rows.filter(r => r.date.startsWith(`${year}-`));
+  if (!current.length) return { current: null, previous: null };
+  const cutoff = current[current.length - 1].date.slice(5);
+  const previous = rows.filter(r => r.date.startsWith(`${prevYear}-`) && r.date.slice(5) <= cutoff);
+  return {
+    current: combine(current, aggregation),
+    // Only compare when last year's data covers most of the same days.
+    previous: previous.length >= current.length * 0.8 ? combine(previous, aggregation) : null,
+  };
 }
 
-function MetricCard({ label, current, previous, meta, previousLabel }) {
-  const change = current !== null && previous ? ((current - previous) / previous) * 100 : null;
+// Last 12 months: the total for the year, plus the latest 6 months against the 6 months before.
+function lastTwelveMonths(rows, aggregation, latest) {
+  const recentStart = addDays(latest, -(HALF_YEAR_DAYS - 1));
+  const earlierStart = addDays(recentStart, -HALF_YEAR_DAYS);
+  const recent = between(rows, recentStart, latest);
+  const earlier = between(rows, earlierStart, addDays(recentStart, -1));
+  const enough = list => list.length >= HALF_YEAR_DAYS * 0.8;
+  return {
+    current: combine(between(rows, addDays(latest, -364), latest), aggregation),
+    recent: enough(recent) ? combine(recent, aggregation) : null,
+    earlier: enough(earlier) ? combine(earlier, aggregation) : null,
+  };
+}
+
+const monthRows = (rows, year, monthIndex) => rows.filter(r => r.date.startsWith(`${year}-${pad(monthIndex + 1)}`));
+
+// Every month from the start of the 12-month window to the latest month, in order.
+function rollingMonths(latest) {
+  const start = addDays(latest, -364);
+  const months = [];
+  let y = Number(start.slice(0, 4));
+  let m = Number(start.slice(5, 7)) - 1;
+  const endKey = latest.slice(0, 7);
+  for (;;) {
+    const key = `${y}-${pad(m + 1)}`;
+    months.push({ key, label: `${MONTH_NAMES[m]} '${String(y).slice(2)}`, from: key === start.slice(0, 7) ? start : `${key}-01` });
+    if (key === endKey) break;
+    m += 1;
+    if (m === 12) { m = 0; y += 1; }
+  }
+  return months;
+}
+
+function subtitleFor(meta, view, year, rolling) {
+  if (view === 'daily') return 'Daily · last 90 days of data';
+  const kind = meta.aggregation === 'mean' ? 'Monthly average' : meta.aggregation === 'last' ? 'Latest value each month' : 'Monthly total';
+  if (rolling) return `${kind} · last 12 months`;
+  return view === 'compare' ? `${kind} · year on year` : `${kind} · ${year}`;
+}
+
+function MetricCard({ metric, rolling, prevYear }) {
+  const { label, meta, current } = metric;
+  const before = rolling ? metric.earlier : metric.previous;
+  const after = rolling ? metric.recent : current;
+  const change = after !== null && before ? ((after - before) / before) * 100 : null;
+  const versus = rolling ? 'vs previous 6 months' : `vs ${prevYear}`;
   return (
     <div className="kpi-card">
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{formatValue(current, meta)}</div>
       {change !== null
-        ? <div className={`kpi-delta ${change >= 0 ? 'up' : 'down'}`}>{change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}% vs {previousLabel}</div>
-        : <div className="kpi-delta neutral">No earlier data to compare</div>}
-      {meta?.aggregation === 'mean' && <div style={{ fontSize: 10, color: 'var(--muted-foreground)', marginTop: 2 }}>Daily average</div>}
+        ? <div className={`kpi-delta ${change >= 0 ? 'up' : 'down'}`}>{change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}% {versus}</div>
+        : <div className="kpi-delta neutral">{rolling ? 'Not enough data to compare' : `No ${prevYear} data to compare`}</div>}
+      {rolling && change !== null && (
+        <div style={smallNote}>Last 6 months: {formatValue(after, meta)} · before: {formatValue(before, meta)}</div>
+      )}
+      {!rolling && before > 0 && <div style={smallNote}>{prevYear}: {formatValue(before, meta)}</div>}
+      {meta?.aggregation === 'mean' && <div style={smallNote}>Daily average</div>}
     </div>
   );
 }
 
-export default function PlatformPanel({ code, name, social, note }) {
-  const [period, setPeriod] = useState(90);
-  const [showAll, setShowAll] = useState(false);
-  const [chosenMetric, setChosenMetric] = useState(null);
+function MetricChart({ metric, year, prevYear, view, color, rolling, latest }) {
+  const { rows, meta, label } = metric;
+  const tick = v => (meta.format === 'percent' ? `${Math.round(v * 100)}%` : compactTick(v));
+
+  if (view === 'daily') {
+    return (
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={withLabels(rows.slice(-90))} margin={{ left: 0, right: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="dayLabel" tick={axisTick} axisLine={false} tickLine={false} interval={13} />
+          <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={tick} />
+          <Tooltip contentStyle={tooltipStyle} formatter={v => [formatValue(v, meta), label]} />
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (rolling || view === 'monthly') {
+    const data = rolling
+      ? rollingMonths(latest).map(mo => ({
+        month: mo.label,
+        value: combine(rows.filter(r => r.date.startsWith(mo.key) && r.date >= mo.from && r.date <= latest), meta.aggregation),
+      }))
+      : MONTH_NAMES.map((month, i) => ({ month, value: combine(monthRows(rows, year, i), meta.aggregation) }));
+    return (
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data.filter(d => d.value !== null)} margin={{ left: 0, right: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} interval={rolling ? 1 : 0} />
+          <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={tick} />
+          <Tooltip contentStyle={tooltipStyle} formatter={v => [formatValue(v, meta), label]} />
+          <Bar dataKey="value" fill={color} radius={[3, 3, 0, 0]} maxBarSize={28} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  const data = MONTH_NAMES.map((month, i) => ({
+    month,
+    [prevYear]: combine(monthRows(rows, prevYear, i), meta.aggregation) ?? 0,
+    [year]: combine(monthRows(rows, year, i), meta.aggregation) ?? 0,
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart data={data} margin={{ left: 0, right: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+        <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} />
+        <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={tick} />
+        <Tooltip contentStyle={tooltipStyle} formatter={(v, series) => [formatValue(v, meta), series]} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Bar dataKey={String(prevYear)} fill="#e5e7eb" radius={[3, 3, 0, 0]} maxBarSize={16} />
+        <Bar dataKey={String(year)} fill={color} radius={[3, 3, 0, 0]} maxBarSize={16} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+export default function PlatformPanel({ code, name, social, view = 'compare' }) {
   const [chosenBreakdown, setChosenBreakdown] = useState(null);
   const [chosenList, setChosenList] = useState(null);
   const [sortMeasure, setSortMeasure] = useState(null);
@@ -91,9 +200,27 @@ export default function PlatformPanel({ code, name, social, note }) {
       .map(key => ({ key, rows: social.series[key], meta: social.meta[key] || {}, label: shortLabel(social.meta[key]?.label || key, name) }))
       .sort((a, b) => rank(a.label) - rank(b.label) || a.label.localeCompare(b.label));
     const latest = metrics.reduce((max, m) => (m.rows[m.rows.length - 1].date > max ? m.rows[m.rows.length - 1].date : max), '');
+    const year = latest ? Number(latest.slice(0, 4)) : null;
+    const prevYear = year ? year - 1 : null;
+    const earliest = metrics.reduce((min, m) => (!min || m.rows[0].date < min ? m.rows[0].date : min), '');
+
+    // Year on year only when the uploads reach back to the start of last year.
+    const yearOnYear = metrics.map(m => ({ ...m, ...yearToDate(m.rows, m.meta.aggregation, year, prevYear) }));
+    const rolling = latest !== '' && !yearOnYear.some(m => m.previous !== null);
+    const totals = rolling
+      ? metrics.map(m => ({ ...m, ...lastTwelveMonths(m.rows, m.meta.aggregation, latest) }))
+      : yearOnYear;
+
+    const headline = totals.filter(m => m.meta.primary !== false);
+    // Extra metrics only appear when they add something: not empty, and not just a copy of a
+    // headline figure (e.g. "organic followers" equals "new followers" when none are sponsored).
+    const extras = totals.filter(m => m.meta.primary === false && m.current
+      && !headline.some(h => h.current === m.current));
+    const shown = headline.length || extras.length ? [...headline, ...extras] : totals;
     const breakdowns = Object.entries(social?.breakdowns || {}).filter(([k]) => k.startsWith(prefix)).map(([key, b]) => ({ key, ...b }));
     const lists = Object.entries(social?.items || {}).filter(([k]) => k.startsWith(prefix)).map(([key, l]) => ({ key, ...l }));
-    return { metrics, headline: metrics.filter(m => m.meta.primary !== false), latest, breakdowns, lists };
+    const windowStart = latest ? (addDays(latest, -364) > earliest ? addDays(latest, -364) : earliest) : '';
+    return { metrics, shown, latest, windowStart, year, prevYear, rolling, breakdowns, lists };
   }, [code, name, social]);
 
   if (!data.metrics.length && !data.breakdowns.length && !data.lists.length) {
@@ -102,30 +229,13 @@ export default function PlatformPanel({ code, name, social, note }) {
         <div className="empty-state">
           <div className="empty-state-title">No {name} data yet</div>
           <div className="empty-state-sub">
-            Click "Upload analytics files" above and drop the {name} exports into the {name} box.
-            {note ? ` ${note}` : ''}
+            Click "Upload analytics files" below and drop the {name} exports into the {name} box.
           </div>
         </div>
       </div>
     );
   }
 
-  // Current period ends on the latest day in the data; the previous period is the same length just before it.
-  const end = data.latest;
-  const startCurrent = end ? addDays(end, -(period - 1)) : null;
-  const startPrevious = end ? addDays(startCurrent, -period) : null;
-  const cards = (showAll ? data.metrics : data.headline).map(m => {
-    const current = m.rows.filter(r => r.date >= startCurrent && r.date <= end);
-    const previous = m.rows.filter(r => r.date >= startPrevious && r.date < startCurrent);
-    return {
-      ...m,
-      current: combine(current, m.meta.aggregation),
-      // Only compare when the earlier period is mostly covered by data.
-      previous: previous.length >= period * 0.8 ? combine(previous, m.meta.aggregation) : null,
-    };
-  });
-
-  const metric = data.metrics.find(m => m.key === chosenMetric) || data.headline[0] || data.metrics[0];
   const breakdown = data.breakdowns.find(b => b.key === chosenBreakdown) || data.breakdowns[0];
   const list = data.lists.find(l => l.key === chosenList) || data.lists[0];
   const measure = list && (list.measures.find(m => m.header === sortMeasure)
@@ -140,74 +250,35 @@ export default function PlatformPanel({ code, name, social, note }) {
     ? [...list.rows].filter(r => r.values[measure.header] !== undefined)
       .sort((a, b) => b.values[measure.header] - a.values[measure.header]).slice(0, 10)
     : [];
-  const percentTick = v => (metric?.meta.format === 'percent' ? `${Math.round(v * 100)}%` : compactTick(v));
+
+  const chartRows = [];
+  for (let i = 0; i < data.shown.length; i += 2) chartRows.push(data.shown.slice(i, i + 2));
+  const chartTitle = m => (data.rolling ? `${m.label} — last 12 months` : `${m.label} — ${data.year} vs ${data.prevYear}`);
 
   return (
     <div>
-      {note && (
-        <div style={{ background: 'var(--secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: 'var(--muted-foreground)' }}>
-          {note}{end ? ` Latest data: ${formatDayMonth(end)} ${end.slice(0, 4)}.` : ''}
-        </div>
-      )}
-
-      {data.metrics.length > 0 && (
+      {data.shown.length > 0 && (
         <>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-            {PERIODS.map(p => (
-              <button key={p.days} className={`btn-secondary${period === p.days ? ' active-toggle' : ''}`} aria-pressed={period === p.days} onClick={() => setPeriod(p.days)}>
-                {p.label}
-              </button>
-            ))}
-            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-              Compared with the {period} days before
-            </span>
+          <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginBottom: 14 }}>
+            {data.rolling
+              ? <>Last 12 months: {fullDate(data.windowStart)} – {fullDate(data.latest)} · each % compares the latest 6 months with the 6 months before. Year-on-year comparison will switch on automatically once the uploads go back to 1 Jan {data.prevYear}.</>
+              : <>Data up to {fullDate(data.latest)} · each figure compares 1 Jan to that day with the same days in {data.prevYear}.</>}
           </div>
-
           <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
-            {cards.map(c => (
-              <MetricCard key={c.key} label={c.label} current={c.current} previous={c.previous} meta={c.meta} previousLabel={`previous ${period} days`} />
-            ))}
+            {data.shown.map(m => <MetricCard key={m.key} metric={m} rolling={data.rolling} prevYear={data.prevYear} />)}
           </div>
-          {data.metrics.length > data.headline.length && (
-            <button className="btn-secondary" style={{ fontSize: 11, marginBottom: 16 }} onClick={() => setShowAll(!showAll)}>
-              {showAll ? 'Show headline metrics only' : `Show all ${data.metrics.length} metrics`}
-            </button>
-          )}
-
-          <div style={sectionLabel}>TRENDS</div>
-          <div style={{ marginBottom: 12 }}>
-            <select aria-label="Metric to chart" value={metric.key} onChange={e => setChosenMetric(e.target.value)} style={selectStyle}>
-              {data.metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
-          </div>
-          <div className="grid-2">
-            <div className="card">
-              <div className="card-title">{metric.label} by month</div>
-              <div className="card-sub">{metric.meta.aggregation === 'mean' ? 'Monthly average' : metric.meta.aggregation === 'last' ? 'Latest value each month' : 'Monthly total'}</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={monthly(metric.rows, metric.meta.aggregation)} margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={percentTick} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={v => [formatValue(v, metric.meta), metric.label]} />
-                  <Bar dataKey="value" fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={28} />
-                </BarChart>
-              </ResponsiveContainer>
+          {chartRows.map(row => (
+            <div className="grid-2" key={row[0].key}>
+              {row.map(m => (
+                <div className="card" key={m.key}>
+                  <div className="card-title">{chartTitle(m)}</div>
+                  <div className="card-sub">{subtitleFor(m.meta, view, data.year, data.rolling)}</div>
+                  <MetricChart metric={m} year={data.year} prevYear={data.prevYear} view={view} rolling={data.rolling}
+                    latest={data.latest} color={COLORS[data.shown.indexOf(m) % COLORS.length]} />
+                </div>
+              ))}
             </div>
-            <div className="card">
-              <div className="card-title">{metric.label}, daily</div>
-              <div className="card-sub">Last 90 days of data</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={withLabels(metric.rows.slice(-90))} margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="dayLabel" tick={axisTick} axisLine={false} tickLine={false} interval={13} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={percentTick} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={v => [formatValue(v, metric.meta), metric.label]} />
-                  <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          ))}
         </>
       )}
 
@@ -271,7 +342,7 @@ export default function PlatformPanel({ code, name, social, note }) {
                 <tbody>
                   {topItems.map(item => (
                     <tr key={item.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{item.date ? `${formatDayMonth(item.date)} ${item.date.slice(0, 4)}` : '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{item.date ? fullDate(item.date) : '—'}</td>
                       <td style={{ maxWidth: 420 }}>
                         <span style={clampStyle} title={item.title}>
                           {item.url

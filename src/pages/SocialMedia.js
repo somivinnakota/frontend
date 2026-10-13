@@ -231,16 +231,14 @@ export default function SocialMedia() {
             Instagram · Facebook · LinkedIn{prepared ? ` · ${prepared.year} vs ${prepared.prevYear} comparison` : ''}
           </div>
         </div>
-        {activeTab !== 'linkedin' && <div className="btn-row">
+        <div className="btn-row">
           <button className={`btn-secondary${view === 'compare' ? ' active-toggle' : ''}`} onClick={() => setView('compare')}>
             {prepared ? `${prepared.year} vs ${prepared.prevYear}` : 'Compare'}
           </button>
           <button className={`btn-secondary${view === 'monthly' ? ' active-toggle' : ''}`} onClick={() => setView('monthly')}>Monthly</button>
           <button className={`btn-secondary${view === 'daily' ? ' active-toggle' : ''}`} onClick={() => setView('daily')}>Daily</button>
-        </div>}
+        </div>
       </div>
-
-      <SocialUpload onUploaded={loadSocial} startOpen={Boolean(social && !social.latestDate)} />
 
       <div className="tab-row">
         {['instagram', 'facebook', 'linkedin'].map(t => (
@@ -260,7 +258,7 @@ export default function SocialMedia() {
       )}
       {social && !prepared && activeTab !== 'linkedin' && (
         <div style={{ color: 'var(--muted-foreground)', fontSize: 13, padding: '20px 0' }}>
-          No social media data yet. Click "Upload analytics files" above and add the Meta Business Suite exports.
+          No social media data yet. Click "Upload analytics files" below and add the Meta Business Suite exports.
         </div>
       )}
 
@@ -314,14 +312,13 @@ export default function SocialMedia() {
         </>
       )}
 
-      {social && activeTab === 'linkedin' && (
-        <PlatformPanel
-          code="li"
-          name="LinkedIn"
-          social={social}
-          note="Figures come from uploaded LinkedIn exports while the LinkedIn API approval is pending."
-        />
+            {social && activeTab === 'linkedin' && (
+        <PlatformPanel code="li" name="LinkedIn" social={social} view={view} />
       )}
+
+      <div style={{ marginTop: 24 }}>
+        <SocialUpload onUploaded={loadSocial} startOpen={Boolean(social && !social.latestDate)} />
+      </div>
     </div>
   );
 }
