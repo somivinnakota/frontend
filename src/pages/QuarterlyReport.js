@@ -35,6 +35,46 @@ function CompareCard({ label, current, previous }) {
   );
 }
 
+// A figure that arrives already formatted from the server, e.g. LinkedIn "8.7%" with change "-8.0%".
+function FigureCard({ label, value, change, previous, versus }) {
+  const down = change && change.startsWith('-');
+  return (
+    <div className="kpi-card">
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{value}</div>
+      {change
+        ? <div className={`kpi-delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'} {change.replace(/^[+-]/, '')} vs {versus}</div>
+        : <div className="kpi-delta neutral">No data for {versus}</div>}
+      {previous && change && (
+        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+          {versus}: {previous}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// An email rate (0.234 → 23.4%), compared in percentage points with the same quarter last year.
+function RateCard({ label, current, previous, note }) {
+  const show = v => (v === null || v === undefined ? '—' : `${(v * 100).toFixed(1)}%`);
+  const diff = current !== null && current !== undefined && previous !== null && previous !== undefined ? (current - previous) * 100 : null;
+  return (
+    <div className="kpi-card">
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{show(current)}</div>
+      {diff !== null
+        ? <div className={`kpi-delta ${diff >= 0 ? 'up' : 'down'}`}>{diff >= 0 ? '▲' : '▼'} {Math.abs(diff).toFixed(1)} pts vs same quarter last year</div>
+        : <div className="kpi-delta neutral">No data for last year</div>}
+      {diff !== null && (
+        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+          Last year: {show(previous)}
+        </div>
+      )}
+      {note && <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{note}</div>}
+    </div>
+  );
+}
+
 function LiveCard({ label, value, note = 'Live' }) {
   return (
     <div className="kpi-card">
@@ -92,6 +132,9 @@ export default function QuarterlyReport() {
 
   const ig = result?.data.instagram;
   const fb = result?.data.facebook;
+  const others = result?.data.others || [];
+  const otherPlatforms = [...new Set(others.map(o => o.platform))];
+  const mc = result?.data.mailchimp;
 
   return (
     <div className="page">
@@ -139,7 +182,7 @@ export default function QuarterlyReport() {
           </div>
         </div>
         <div style={{ marginTop: 12, fontSize: 11, color: '#9ca3af' }}>
-          Compares {quarter} {year} against {quarter} {year - 1} using Instagram and Facebook data.
+          Compares {quarter} {year} against {quarter} {year - 1} using Instagram, Facebook and Mailchimp data, and against the previous quarter for LinkedIn.
         </div>
       </div>
 
@@ -182,6 +225,35 @@ export default function QuarterlyReport() {
             <CompareCard label="Interactions" current={fb.current.interactions} previous={fb.previous.interactions} />
             <LiveCard label="Talking about" value={fb.live.talkingAbout} note="Live · last 7 days" />
           </div>
+
+          {others.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8, fontWeight: 500 }}>
+                {otherPlatforms.join(' & ').toUpperCase()} — {result.quarter} {result.year} vs {result.data.othersComparedWith}
+              </div>
+              <div className="kpi-row" style={{ marginBottom: 18, flexWrap: 'wrap' }}>
+                {others.slice(0, 8).map(o => (
+                  <FigureCard key={`${o.platform}-${o.label}`}
+                    label={otherPlatforms.length > 1 ? o.label.replace(/\s*\(total\)$/i, '') : o.label.replace(new RegExp(`^${o.platform}\\s+`, 'i'), '').replace(/\s*\(total\)$/i, '')}
+                    value={o.display} change={o.change} previous={o.previousDisplay} versus={result.data.othersComparedWith} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {mc?.connected && (
+            <>
+              <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8, fontWeight: 500 }}>
+                EMAIL (MAILCHIMP) — {result.quarter} {result.year} vs {result.quarter} {result.prevYear}
+              </div>
+              <div className="kpi-row" style={{ marginBottom: 18 }}>
+                <CompareCard label="Campaigns sent" current={mc.current.campaigns} previous={mc.previous.campaigns} />
+                <CompareCard label="Emails delivered" current={mc.current.delivered} previous={mc.previous.delivered} />
+                <RateCard label="Engagement rate" current={mc.current.engagementRate} previous={mc.previous.engagementRate} note="Subscribers who clicked ÷ emails delivered" />
+                <RateCard label="Open rate" current={mc.current.openRate} previous={mc.previous.openRate} note="Can be inflated by Apple Mail privacy" />
+              </div>
+            </>
+          )}
 
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>

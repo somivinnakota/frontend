@@ -15,7 +15,7 @@ const REPORT_TYPES = [
 const UPLOADS = { media: 'Press and media', kpis: 'KPI tracker', events_calendar: 'Calendar of events', conferences: 'Conference list' };
 
 const SECTIONS = [
-  ['social', 'Social media'], ['content', 'Content'], ['website', 'Website'], ['media', 'Media coverage'],
+  ['social', 'Social media'], ['email', 'Email (Mailchimp)'], ['content', 'Content'], ['website', 'Website'], ['media', 'Media coverage'],
   ['publications', 'Publications'], ['events', 'Events'], ['conferences', 'Conferences'], ['kpis', 'KPIs'],
 ];
 
@@ -67,6 +67,7 @@ function evidenceLookup(pkg) {
   (pkg.publications?.in_period || []).forEach(p => { map[p.id] = `Publication, ${p.date}: ${p.title}`; });
   (pkg.events?.in_period || []).forEach(e => { map[e.id] = `Event, ${e.date}: ${e.name}`; });
   Object.values(pkg.uploads || {}).forEach(u => (u.in_period || []).forEach(r => { map[r.id] = `Uploaded entry, ${r.date}`; }));
+  (pkg.email?.in_period || []).forEach(c => { map[c.id] = `Email campaign, ${c.date}: ${c.title}`; });
   return map;
 }
 
