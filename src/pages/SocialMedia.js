@@ -8,6 +8,7 @@ import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import SocialUpload from '../components/SocialUpload';
 import PlatformPanel from '../components/PlatformPanel';
+import MetricInfo from '../components/MetricInfo';
 import MailchimpPanel from '../components/MailchimpPanel';
 import {
   MONTH_NAMES, withLabels, forYear, upToDay, sumValues, peakValue,
@@ -39,16 +40,23 @@ const FACEBOOK_CHARTS = [
   ['fb-clicks', 'Link clicks', 'Clicks on page links', '#dc2626'],
 ];
 
+// The glossary entry (eye-icon tooltip) for each series' card.
+const GLOSSARY_IDS = {
+  'ig-reach': 'reach', 'ig-views': 'views', 'ig-interactions': 'interactions', 'ig-visits': 'profile_visits',
+  'ig-follows': 'follower_growth', 'ig-clicks': 'link_clicks',
+  'fb-views': 'views', 'fb-visits': 'profile_visits', 'fb-interactions': 'interactions', 'fb-clicks': 'link_clicks',
+};
+
 function pctChange(current, previous) {
   if (!previous) return null;
   return ((current - previous) / previous * 100).toFixed(1);
 }
 
-function CompareCard({ label, current, previous, prevYear }) {
+function CompareCard({ label, current, previous, prevYear, glossaryId }) {
   const pct = pctChange(current, previous);
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryId} /></div>
       <div className="kpi-value">{current.toLocaleString()}</div>
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
         {pct !== null
@@ -219,7 +227,7 @@ export default function SocialMedia() {
 
   const cards = list => list.map(([name, label]) => {
     const totals = prepared.toDate(name);
-    return <CompareCard key={name} label={label} current={totals.current} previous={totals.previous} prevYear={prepared.prevYear} />;
+    return <CompareCard key={name} label={label} current={totals.current} previous={totals.previous} prevYear={prepared.prevYear} glossaryId={GLOSSARY_IDS[name]} />;
   });
 
   return (
@@ -273,7 +281,7 @@ export default function SocialMedia() {
               const peak = prepared.peakToDate(name);
               return (
                 <CompareCard key={`peak-${name}`} label={name === 'ig-reach' ? 'Peak daily reach' : 'Peak daily views'}
-                  current={peak.current} previous={peak.previous} prevYear={prepared.prevYear} />
+                  current={peak.current} previous={peak.previous} prevYear={prepared.prevYear} glossaryId={GLOSSARY_IDS[name]} />
               );
             })}
           </div>
@@ -296,7 +304,7 @@ export default function SocialMedia() {
               <div className="kpi-delta neutral"><span className="status-dot live"></span>Last 7 days</div>
             </div>
             <div className="kpi-card">
-              <div className="kpi-label">Engagement rate (7-day)</div>
+              <div className="kpi-label">Engagement rate (7-day)<MetricInfo id="engagement_rate" /></div>
               <div className="kpi-value">{engagementRate}</div>
               <div className="kpi-delta neutral">Talking about ÷ followers</div>
             </div>

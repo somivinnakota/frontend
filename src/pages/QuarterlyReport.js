@@ -3,6 +3,7 @@ import axios from 'axios';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import { downloadReportPdf } from '../utils/pdf';
+import MetricInfo, { glossaryIdForLabel } from '../components/MetricInfo';
 
 const THIS_YEAR = new Date().getFullYear();
 const YEARS = [THIS_YEAR - 1, THIS_YEAR];
@@ -13,11 +14,11 @@ function pct(curr, prev) {
   return ((curr - prev) / prev * 100).toFixed(1);
 }
 
-function CompareCard({ label, current, previous }) {
+function CompareCard({ label, current, previous, glossaryId }) {
   const p = pct(current, previous);
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryId} /></div>
       <div className="kpi-value">{typeof current === 'number' ? current.toLocaleString() : current}</div>
       {p !== null
         ? (
@@ -40,7 +41,7 @@ function FigureCard({ label, value, change, previous, versus }) {
   const down = change && change.startsWith('-');
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryIdForLabel(label)} /></div>
       <div className="kpi-value">{value}</div>
       {change
         ? <div className={`kpi-delta ${down ? 'down' : 'up'}`}>{down ? '▼' : '▲'} {change.replace(/^[+-]/, '')} vs {versus}</div>
@@ -55,12 +56,12 @@ function FigureCard({ label, value, change, previous, versus }) {
 }
 
 // An email rate (0.234 → 23.4%), compared in percentage points with the same quarter last year.
-function RateCard({ label, current, previous, note }) {
+function RateCard({ label, current, previous, note, glossaryId }) {
   const show = v => (v === null || v === undefined ? '—' : `${(v * 100).toFixed(1)}%`);
   const diff = current !== null && current !== undefined && previous !== null && previous !== undefined ? (current - previous) * 100 : null;
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryId} /></div>
       <div className="kpi-value">{show(current)}</div>
       {diff !== null
         ? <div className={`kpi-delta ${diff >= 0 ? 'up' : 'down'}`}>{diff >= 0 ? '▲' : '▼'} {Math.abs(diff).toFixed(1)} pts vs same quarter last year</div>
@@ -75,10 +76,10 @@ function RateCard({ label, current, previous, note }) {
   );
 }
 
-function LiveCard({ label, value, note = 'Live' }) {
+function LiveCard({ label, value, note = 'Live', glossaryId }) {
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryId} /></div>
       <div className="kpi-value">{typeof value === 'number' ? value.toLocaleString() : value}</div>
       <div className="kpi-delta neutral"><span className="status-dot live"></span>{note}</div>
     </div>
@@ -123,6 +124,7 @@ export default function QuarterlyReport() {
         title: `${result.quarter} ${result.year} Quarterly Engagement Report`,
         subtitle: `Compared with ${result.quarter} ${result.prevYear}`,
         report: result.report,
+        glossaryIds: result.glossaryIds,
       });
     } catch (e) {
       setError('The PDF could not be created. Make sure the backend is running.');
@@ -204,25 +206,25 @@ export default function QuarterlyReport() {
             INSTAGRAM — {result.quarter} {result.year} vs {result.quarter} {result.prevYear}
           </div>
           <div className="kpi-row" style={{ marginBottom: 10 }}>
-            <CompareCard label="Reach" current={ig.current.reach} previous={ig.previous.reach} />
-            <CompareCard label="Views" current={ig.current.views} previous={ig.previous.views} />
-            <CompareCard label="Interactions" current={ig.current.interactions} previous={ig.previous.interactions} />
-            <CompareCard label="Profile visits" current={ig.current.visits} previous={ig.previous.visits} />
+            <CompareCard label="Reach" current={ig.current.reach} previous={ig.previous.reach} glossaryId="reach" />
+            <CompareCard label="Views" current={ig.current.views} previous={ig.previous.views} glossaryId="views" />
+            <CompareCard label="Interactions" current={ig.current.interactions} previous={ig.previous.interactions} glossaryId="interactions" />
+            <CompareCard label="Profile visits" current={ig.current.visits} previous={ig.previous.visits} glossaryId="profile_visits" />
           </div>
           <div className="kpi-row" style={{ marginBottom: 18 }}>
-            <CompareCard label="New followers" current={ig.current.follows} previous={ig.previous.follows} />
-            <CompareCard label="Peak daily reach" current={ig.current.peakReach} previous={ig.previous.peakReach} />
+            <CompareCard label="New followers" current={ig.current.follows} previous={ig.previous.follows} glossaryId="follower_growth" />
+            <CompareCard label="Peak daily reach" current={ig.current.peakReach} previous={ig.previous.peakReach} glossaryId="reach" />
             <LiveCard label="Facebook followers" value={fb.live.followers} />
-            <LiveCard label="FB engagement rate (7-day)" value={fb.live.engagementRate} note="Live · talking about ÷ followers" />
+            <LiveCard label="FB engagement rate (7-day)" value={fb.live.engagementRate} note="Live · talking about ÷ followers" glossaryId="engagement_rate" />
           </div>
 
           <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8, fontWeight: 500 }}>
             FACEBOOK — {result.quarter} {result.year} vs {result.quarter} {result.prevYear}
           </div>
           <div className="kpi-row" style={{ marginBottom: 18 }}>
-            <CompareCard label="Page views" current={fb.current.views} previous={fb.previous.views} />
-            <CompareCard label="Page visits" current={fb.current.visits} previous={fb.previous.visits} />
-            <CompareCard label="Interactions" current={fb.current.interactions} previous={fb.previous.interactions} />
+            <CompareCard label="Page views" current={fb.current.views} previous={fb.previous.views} glossaryId="views" />
+            <CompareCard label="Page visits" current={fb.current.visits} previous={fb.previous.visits} glossaryId="profile_visits" />
+            <CompareCard label="Interactions" current={fb.current.interactions} previous={fb.previous.interactions} glossaryId="interactions" />
             <LiveCard label="Talking about" value={fb.live.talkingAbout} note="Live · last 7 days" />
           </div>
 
@@ -249,8 +251,8 @@ export default function QuarterlyReport() {
               <div className="kpi-row" style={{ marginBottom: 18 }}>
                 <CompareCard label="Campaigns sent" current={mc.current.campaigns} previous={mc.previous.campaigns} />
                 <CompareCard label="Emails delivered" current={mc.current.delivered} previous={mc.previous.delivered} />
-                <RateCard label="Engagement rate" current={mc.current.engagementRate} previous={mc.previous.engagementRate} note="Subscribers who clicked ÷ emails delivered" />
-                <RateCard label="Open rate" current={mc.current.openRate} previous={mc.previous.openRate} note="Can be inflated by Apple Mail privacy" />
+                <RateCard label="Engagement rate" current={mc.current.engagementRate} previous={mc.previous.engagementRate} note="Subscribers who clicked ÷ emails delivered" glossaryId="click_through_rate" />
+                <RateCard label="Open rate" current={mc.current.openRate} previous={mc.previous.openRate} note="Can be inflated by Apple Mail privacy" glossaryId="open_rate" />
               </div>
             </>
           )}

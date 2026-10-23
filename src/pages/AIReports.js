@@ -150,7 +150,7 @@ function ReportView({ record, onRegenerate, busy }) {
     catch { setNotice('Could not copy. Select the text and copy it instead.'); }
   };
   const pdf = async () => {
-    try { await downloadReportPdf({ title, subtitle: `Compared with ${compared}`, report: reportToText(record) }); }
+    try { await downloadReportPdf({ title, subtitle: `Compared with ${compared}`, report: reportToText(record), glossaryIds: record.glossary_ids }); }
     catch { setNotice('The PDF could not be created. Make sure the backend is running.'); }
   };
 

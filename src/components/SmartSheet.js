@@ -264,7 +264,7 @@ export function readFile(file) {
       try {
         // raw: true stops SheetJS guessing types in CSVs (e.g. dates becoming serial numbers).
         const workbook = isCsv
-          ? XLSX.read(reader.result, { type: 'string', raw: true })
+          ? XLSX.read(decodeText(reader.result), { type: 'string', raw: true })
           : XLSX.read(reader.result, { type: 'array', cellDates: true });
         const sheets = workbook.SheetNames.map(name => parseSheet(name, workbook.Sheets[name]));
         resolve({ fileName: file.name, sheets });
@@ -273,9 +273,17 @@ export function readFile(file) {
         reject(new Error('This file could not be parsed. Check that it is a valid CSV or Excel file.'));
       }
     };
-    if (isCsv) reader.readAsText(file);
-    else reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(file);
   });
+}
+
+// CSVs saved from Excel on Windows are often not UTF-8, which turns ’ and í into "�".
+function decodeText(buffer) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
 }
 
 /* =========================================================
@@ -333,7 +341,7 @@ function removeWorkbook(key) {
    ========================================================= */
 
 const compactNumber = new Intl.NumberFormat('en-IE', { notation: 'compact', maximumFractionDigits: 1 });
-const formatNumber = v => Number(v).toLocaleString('en-IE', { maximumFractionDigits: 2 });
+const formatNumber = v => Math.round(Number(v)).toLocaleString('en-IE');
 const truncate = (s, n = 22) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Hidden but still focusable, so keyboard users can reach the file inputs.
@@ -685,7 +693,9 @@ function DataTable({ sheet }) {
    Page
    ========================================================= */
 
-export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow }) {
+// `summary` (optional): a component that analyses the whole workbook for a specific page, e.g. the
+// conference list. It gets the generic charts as `fallback` to show when it doesn't recognise the file.
+export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, summary: Summary }) {
   const storageKey = useMemo(() => storageKeyFor(title), [title]);
 
   const [workbook, setWorkbook] = useState(() => loadWorkbook(storageKey));
@@ -802,9 +812,9 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow }) {
             </button>
           </div>
 
-          {activeTab === 'charts'
-            ? <SmartChart key={viewKey} sheet={sheet} />
-            : <DataTable key={viewKey} sheet={sheet} />}
+          {activeTab === 'table' ? <DataTable key={viewKey} sheet={sheet} />
+            : Summary ? <Summary key={viewKey} workbook={workbook} fallback={<SmartChart sheet={sheet} />} />
+            : <SmartChart key={viewKey} sheet={sheet} />}
         </>
       )}
     </div>

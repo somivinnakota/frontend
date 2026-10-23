@@ -3,6 +3,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { MONTH_NAMES, withLabels, formatDayMonth, compactTick } from '../utils/social';
+import MetricInfo, { glossaryIdForLabel } from './MetricInfo';
 
 // Shows any platform's uploaded data in the same style as the Instagram and Facebook tabs.
 // The comparison is chosen from the data itself:
@@ -141,7 +142,7 @@ function MetricCard({ metric, rolling, prevYear }) {
   const versus = rolling ? 'vs previous 6 months' : `vs ${prevYear}`;
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryIdForLabel(label)} /></div>
       <div className="kpi-value">{formatValue(current, meta)}</div>
       {change !== null
         ? <div className={`kpi-delta ${change >= 0 ? 'up' : 'down'}`}>{change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}% {versus}</div>

@@ -3,8 +3,9 @@ import { API_BASE } from '../config';
 
 // Sends the report shown on screen to the backend and downloads it as a PDF,
 // so the PDF always matches what the user is looking at.
-export async function downloadReportPdf({ title, subtitle = '', report }) {
-  const response = await axios.post(`${API_BASE}/api/pdf`, { title, subtitle, report }, { responseType: 'blob' });
+// glossaryIds: the metrics used in the report; the backend adds their definitions as an appendix.
+export async function downloadReportPdf({ title, subtitle = '', report, glossaryIds = [] }) {
+  const response = await axios.post(`${API_BASE}/api/pdf`, { title, subtitle, report, glossaryIds }, { responseType: 'blob' });
   const url = URL.createObjectURL(response.data);
   const link = document.createElement('a');
   link.href = url;

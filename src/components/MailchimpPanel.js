@@ -1,67 +1,65 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-} from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
-import { MONTH_NAMES, compactTick } from '../utils/social';
+import { MONTH_NAMES } from '../utils/social';
+import MetricInfo from './MetricInfo';
 
-// Email engagement from Mailchimp campaign reports, in the same style as the social media tabs.
-// Engagement rate = unique subscribers who clicked ÷ emails delivered. Opens are shown too, but
-// Apple Mail Privacy Protection inflates them, so clicks are the more reliable engagement measure.
+// Newsletter performance from Mailchimp. A filter picks which campaigns count as newsletters
+// (by audience, folder and/or a word in the name), and every figure below uses only those.
+// Averages are per newsletter: each newsletter's rate is worked out, then averaged.
 
-const DAY = 86400000;
+const STORAGE_KEY = 'mailchimp-newsletter-filter';
 const tooltipStyle = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--card)' };
 const axisTick = { fontSize: 10, fill: 'var(--muted-foreground)' };
 const sectionLabel = { fontSize: 10, color: 'var(--muted-foreground)', margin: '22px 0 10px', fontWeight: 600, letterSpacing: '0.1em' };
 const smallNote = { fontSize: 10, color: 'var(--muted-foreground)', marginTop: 2 };
-const selectStyle = {
+const fieldStyle = {
   padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12,
   fontFamily: 'inherit', color: 'var(--foreground)', background: 'var(--card)',
 };
+const labelStyle = { fontSize: 10, color: 'var(--muted-foreground)', fontWeight: 600, letterSpacing: '0.1em', marginBottom: 4 };
 
 const pct = v => (v === null || v === undefined ? '—' : `${(v * 100).toFixed(1)}%`);
 const count = v => Math.round(v).toLocaleString('en-IE');
 const ratio = (a, b) => (b > 0 ? a / b : null);
+const average = list => { const v = list.filter(x => x !== null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 const shortDate = iso => new Date(iso).toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' });
+const monthLabel = key => `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} '${key.slice(2, 4)}`;
 
-function summarise(campaigns) {
-  const total = key => campaigns.reduce((t, c) => t + c[key], 0);
-  const delivered = total('delivered');
-  const opens = total('uniqueOpens');
-  const clicks = total('uniqueClicks');
-  return {
-    campaigns: campaigns.length,
-    delivered,
-    openRate: ratio(opens, delivered),
-    engagementRate: ratio(clicks, delivered),
-    clickToOpen: ratio(clicks, opens),
-    unsubscribeRate: ratio(total('unsubscribed'), delivered),
-  };
-}
-
-const rates = c => ({
+const withRates = c => ({
+  ...c,
   openRate: ratio(c.uniqueOpens, c.delivered),
-  engagementRate: ratio(c.uniqueClicks, c.delivered),
+  clickRate: ratio(c.uniqueClicks, c.delivered),
+  unsubscribeRate: ratio(c.unsubscribed, c.delivered),
 });
 
-function Card({ label, value, current, previous, isRate, lowerIsBetter, note }) {
-  let delta = null;
-  if (previous !== null && previous !== undefined && current !== null && previous > 0) {
-    const diff = isRate ? (current - previous) * 100 : ((current - previous) / previous) * 100;
-    const good = lowerIsBetter ? diff <= 0 : diff >= 0;
-    delta = (
-      <div className={`kpi-delta ${good ? 'up' : 'down'}`}>
-        {diff >= 0 ? '▲' : '▼'} {Math.abs(diff).toFixed(1)}{isRate ? ' pts' : '%'} vs previous 12 months
-      </div>
-    );
-  }
+function loadFilter() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || null; } catch { return null; }
+}
+function saveFilter(filter) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(filter)); } catch { /* storage unavailable */ }
+}
+
+// First visit: use a folder or campaign name that mentions newsletters, if there is one.
+function suggestedFilter(campaigns) {
+  const folder = campaigns.map(c => c.folder).find(f => /newsletter/i.test(f || ''));
+  if (folder) return { audience: 'all', folder, keyword: '' };
+  const named = campaigns.some(c => /newsletter/i.test(`${c.title} ${c.subject}`));
+  return { audience: 'all', folder: 'all', keyword: named ? 'newsletter' : '' };
+}
+
+function matches(c, filter) {
+  const word = filter.keyword.trim().toLowerCase();
+    return !word || `${c.title} ${c.subject}`.toLowerCase().includes(word);
+}
+
+function Card({ label, value, note, glossaryId }) {
   return (
     <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label">{label}<MetricInfo id={glossaryId} /></div>
       <div className="kpi-value">{value}</div>
-      {delta || <div className="kpi-delta neutral">No earlier campaigns to compare</div>}
       {note && <div style={smallNote}>{note}</div>}
     </div>
   );
@@ -71,7 +69,7 @@ export default function MailchimpPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sortBy, setSortBy] = useState('recent');
+  const [filter, setFilter] = useState(loadFilter);
 
   const load = useCallback((refresh = false) => {
     setLoading(true);
@@ -82,43 +80,46 @@ export default function MailchimpPanel() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (data && !filter) setFilter(suggestedFilter(data.campaigns)); }, [data, filter]);
+
+  const update = change => setFilter(f => { const next = { ...f, ...change }; saveFilter(next); return next; });
 
   const view = useMemo(() => {
-    if (!data) return null;
-    const now = Date.now();
-    const age = c => now - Date.parse(c.sentAt);
-    const recent = data.campaigns.filter(c => age(c) <= 365 * DAY);
-    const earlier = data.campaigns.filter(c => age(c) > 365 * DAY && age(c) <= 730 * DAY);
+    if (!data || !filter) return null;
+    const newsletters = data.campaigns.filter(c => matches(c, filter)).map(withRates);
+    const audiences = data.audiences || [];
+   
+    // Subscribers: the chosen audience, or every audience these newsletters were sent to.
+    const audienceIds = filter.audience !== 'all' ? [filter.audience] : [...new Set(newsletters.map(c => c.audienceId))];
+    const used = audiences.filter(a => audienceIds.includes(a.id));
+    // Start at the first newsletter, and only where every audience counted has a figure for that month.
+    const start = [newsletters[0]?.sentAt.slice(0, 7), ...used.map(a => a.history[0]?.month)].filter(Boolean).sort().pop();
+    const months = [...new Set(used.flatMap(a => a.history.map(h => h.month)))].sort()
+      .filter(m => !start || m >= start);
+    const growth = months.map(m => ({
+      month: monthLabel(m),
+      Subscribers: used.reduce((t, a) => {
+        const upTo = a.history.filter(h => h.month <= m);
+        return t + (upTo.length ? upTo[upTo.length - 1].subscribers : 0);
+      }, 0),
+    }));
+    const subscribers = used.reduce((t, a) => t + a.subscribers, 0);
 
-    // The last 12 calendar months, oldest first.
-    const today = new Date();
-    const months = Array.from({ length: 12 }, (_, i) => {
-      const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
-      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: `${MONTH_NAMES[d.getMonth()]} '${String(d.getFullYear()).slice(2)}` };
-    });
-    const monthly = months.map(m => {
-      const inMonth = data.campaigns.filter(c => c.sentAt.slice(0, 7) === m.key);
-      const s = summarise(inMonth);
-      return {
-        month: m.label,
-        delivered: s.delivered,
-        'Open rate': s.openRate,
-        'Engagement rate': s.engagementRate,
-      };
-    });
-    return { now: summarise(recent), before: earlier.length ? summarise(earlier) : null, monthly, total: data.campaigns.length };
-  }, [data]);
-
-  const tableRows = useMemo(() => {
-    if (!data) return [];
-    const withRates = data.campaigns.map(c => ({ ...c, ...rates(c) }));
-    const sorters = {
-      recent: (a, b) => b.sentAt.localeCompare(a.sentAt),
-      engagement: (a, b) => (b.engagementRate ?? -1) - (a.engagementRate ?? -1),
-      opens: (a, b) => (b.openRate ?? -1) - (a.openRate ?? -1),
+    return {
+      newsletters,
+      openRate: average(newsletters.map(c => c.openRate)),
+      clickRate: average(newsletters.map(c => c.clickRate)),
+      unsubscribeRate: average(newsletters.map(c => c.unsubscribeRate)),
+      subscribers: used.length ? subscribers : null,
+      growthSince: growth.length ? { from: growth[0].month, change: subscribers - growth[0].Subscribers } : null,
+      growth,
+      perNewsletter: newsletters.map(c => ({
+        name: new Date(c.sentAt).toLocaleDateString('en-IE', { day: 'numeric', month: 'short' }),
+        title: c.title, 'Open rate': c.openRate, 'Click rate': c.clickRate,
+      })),
+      audienceCount: audienceIds.length,
     };
-    return withRates.sort(sorters[sortBy]).slice(0, 15);
-  }, [data, sortBy]);
+  }, [data, filter]);
 
   if (error) {
     return (
@@ -130,118 +131,135 @@ export default function MailchimpPanel() {
       </div>
     );
   }
-  if (!data) return <div style={{ color: 'var(--muted-foreground)', fontSize: 13, padding: '20px 0' }}>Loading Mailchimp data...</div>;
-  if (!data.campaigns.length) {
-    return (
-      <div className="card">
-        <div className="empty-state">
-          <div className="empty-state-title">No sent campaigns yet</div>
-          <div className="empty-state-sub">Campaigns appear here once they've been sent from Mailchimp.</div>
-        </div>
-      </div>
-    );
-  }
+  if (!data || !view) return <div style={{ color: 'var(--muted-foreground)', fontSize: 13, padding: '20px 0' }}>Loading Mailchimp data...</div>;
 
-  const { now, before } = view;
+  const { newsletters } = view;
+  const growthNote = view.growthSince
+    ? `${view.growthSince.change >= 0 ? '+' : ''}${count(view.growthSince.change)} since ${view.growthSince.from}`
+    : null;
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         <div style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-          Live from Mailchimp · last 12 months compared with the 12 months before · updated {new Date(data.fetchedAt).toLocaleTimeString('en-IE', { hour: '2-digit', minute: '2-digit' })}
+          Live from Mailchimp · updated {new Date(data.fetchedAt).toLocaleTimeString('en-IE', { hour: '2-digit', minute: '2-digit' })}
         </div>
         <button className="btn-secondary" style={{ fontSize: 11 }} disabled={loading} onClick={() => load(true)}>
           {loading ? 'Refreshing...' : 'Refresh from Mailchimp'}
         </button>
       </div>
 
-      <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
-        <Card label="Engagement rate" value={pct(now.engagementRate)} current={now.engagementRate} previous={before?.engagementRate} isRate
-          note="Subscribers who clicked ÷ emails delivered" />
-        <Card label="Open rate" value={pct(now.openRate)} current={now.openRate} previous={before?.openRate} isRate
-          note="Can be inflated by Apple Mail privacy" />
-        <Card label="Click-to-open rate" value={pct(now.clickToOpen)} current={now.clickToOpen} previous={before?.clickToOpen} isRate
-          note="Of those who opened, how many clicked" />
-        <Card label="Unsubscribe rate" value={pct(now.unsubscribeRate)} current={now.unsubscribeRate} previous={before?.unsubscribeRate} isRate lowerIsBetter />
-      </div>
-      <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
-        <Card label="Campaigns sent" value={count(now.campaigns)} current={now.campaigns} previous={before?.campaigns} />
-        <Card label="Emails delivered" value={count(now.delivered)} current={now.delivered} previous={before?.delivered} />
-      </div>
-
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-title">Open and engagement rate — last 12 months</div>
-          <div className="card-sub">All campaigns sent each month combined</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={view.monthly} margin={{ left: 0, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} interval={1} />
-              <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={v => `${Math.round(v * 100)}%`} />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [pct(v), name]} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Line type="monotone" dataKey="Open rate" stroke="#0891b2" strokeWidth={2} connectNulls dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="Engagement rate" stroke="#53266a" strokeWidth={2} connectNulls dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="card">
-          <div className="card-title">Emails delivered — last 12 months</div>
-          <div className="card-sub">Monthly total</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={view.monthly} margin={{ left: 0, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} interval={1} />
-              <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={compactTick} />
-              <Tooltip contentStyle={tooltipStyle} formatter={v => [count(v), 'Emails delivered']} />
-              <Bar dataKey="delivered" fill="#d97706" radius={[3, 3, 0, 0]} maxBarSize={28} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div style={sectionLabel}>CAMPAIGNS</div>
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card-title">Which campaigns are you looking for?</div>
+        <div className="card-sub">Every figure on this tab uses only the campaigns that match. Your choice is remembered on this computer.</div>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
-            <div className="card-title">{sortBy === 'recent' ? 'Latest campaigns' : 'Top campaigns'}</div>
-            <div className="card-sub" style={{ marginBottom: 0 }}>{view.total} campaigns sent in total</div>
+            <div style={labelStyle}>NAME OR SUBJECT CONTAINS</div>
+            <input type="search" aria-label="Name or subject contains" placeholder="e.g. newsletter" value={filter.keyword}
+              onChange={e => update({ keyword: e.target.value })} style={{ ...fieldStyle, width: 200 }} />
           </div>
-          <select aria-label="Sort campaigns" value={sortBy} onChange={e => setSortBy(e.target.value)} style={selectStyle}>
-            <option value="recent">Most recent</option>
-            <option value="engagement">Highest engagement rate</option>
-            <option value="opens">Highest open rate</option>
-          </select>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Sent</th>
-                <th>Campaign</th>
-                <th style={{ textAlign: 'right' }}>Delivered</th>
-                <th style={{ textAlign: 'right' }}>Open rate</th>
-                <th style={{ textAlign: 'right' }}>Engagement rate</th>
-                <th style={{ textAlign: 'right' }}>Unsubscribes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tableRows.map(c => (
-                <tr key={c.id}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{shortDate(c.sentAt)}</td>
-                  <td style={{ maxWidth: 380 }}>
-                    <div style={{ fontWeight: 500 }}>{c.title}</div>
-                    {c.subject && c.subject !== c.title && <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{c.subject}</div>}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>{count(c.delivered)}</td>
-                  <td style={{ textAlign: 'right' }}>{pct(c.openRate)}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{pct(c.engagementRate)}</td>
-                  <td style={{ textAlign: 'right' }}>{count(c.unsubscribed)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ fontSize: 12, color: 'var(--muted-foreground)', paddingBottom: 6 }}>
+            {newsletters.length} of {data.campaigns.length} campaigns match
+          </div>
         </div>
       </div>
+
+      <div className="kpi-row" style={{ flexWrap: 'wrap' }}>
+        <Card label="Average open rate" value={pct(view.openRate)} glossaryId="open_rate"/>
+        <Card label="Average click rate" value={pct(view.clickRate)} glossaryId="click_through_rate"
+          note="Subscribers who clicked ÷ emails delivered" />
+        <Card label="Average unsubscribe rate" value={pct(view.unsubscribeRate)} glossaryId="unsubscribe_rate"
+          note="Unsubscribes ÷ emails delivered" />
+        <Card label="Total subscribers" value={view.subscribers === null ? '—' : count(view.subscribers)}
+          note={[growthNote, view.audienceCount > 1 ? `${view.audienceCount} audiences added together` : null].filter(Boolean).join(' · ')} />
+      </div>
+      <div style={{ ...smallNote, marginBottom: 14 }}>
+        Averages are across {newsletters.length} newsletter{newsletters.length === 1 ? '' : 's'}: each newsletter's rate, averaged.
+      </div>
+
+      {newsletters.length === 0 ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-title">No campaigns match</div>
+            <div className="empty-state-sub">Change the audience, folder or word above to pick your newsletters.</div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="grid-2">
+            <div className="card">
+              <div className="card-title">Open and click rate for each newsletter</div>
+              <div className="card-sub">By send date · unsubscribe rates are in the table below</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={view.perNewsletter} margin={{ left: 0, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="name" tick={axisTick} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} tickFormatter={v => `${Math.round(v * 100)}%`} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [pct(v), name]}
+                    labelFormatter={(label, items) => items?.[0]?.payload?.title || label} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Open rate" stroke="#0891b2" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="Click rate" stroke="#53266a" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="card">
+              <div className="card-title">Subscriber growth</div>
+              <div className="card-sub">Subscribers at the end of each month</div>
+              {view.growth.length ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={view.growth} margin={{ left: 0, right: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="month" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} axisLine={false} tickLine={false} width={52} tickFormatter={count} domain={['auto', 'auto']} allowDecimals={false} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={v => [count(v), 'Subscribers']} />
+                    <Line type="monotone" dataKey="Subscribers" stroke="#53266a" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--muted-foreground)', padding: '40px 0', textAlign: 'center' }}>
+                  Mailchimp hasn't returned a subscriber history for this audience yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={sectionLabel}>NEWSLETTERS</div>
+          <div className="card">
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Sent</th>
+                    <th>Newsletter</th>
+                    <th style={{ textAlign: 'right' }}>Delivered</th>
+                    <th style={{ textAlign: 'right' }}>Open rate</th>
+                    <th style={{ textAlign: 'right' }}>Click rate</th>
+                    <th style={{ textAlign: 'right' }}>Unsubscribe rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...newsletters].reverse().map(c => (
+                    <tr key={c.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{shortDate(c.sentAt)}</td>
+                      <td style={{ maxWidth: 380 }}>
+                        <div style={{ fontWeight: 500 }}>{c.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                          {[c.subject !== c.title && c.subject, c.audience, c.folder].filter(Boolean).join(' · ')}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>{count(c.delivered)}</td>
+                      <td style={{ textAlign: 'right' }}>{pct(c.openRate)}</td>
+                      <td style={{ textAlign: 'right' }}>{pct(c.clickRate)}</td>
+                      <td style={{ textAlign: 'right' }}>{pct(c.unsubscribeRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -181,6 +181,7 @@ export default function Overview() {
   const [impactData, setImpactData] = useState(null);
   const [impactError, setImpactError] = useState('');
   const [pubCount, setPubCount] = useState(null);
+  const [pubByYear, setPubByYear] = useState(null); // verified INFANT papers per year, each counted once
   const [narrative, setNarrative] = useState('');
   const [loadingNarrative, setLoadingNarrative] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -190,7 +191,7 @@ export default function Overview() {
   const [social, setSocial] = useState(null);
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/publications/count`).then(r => setPubCount(r.data.total)).catch(() => {});
+    axios.get(`${API_BASE}/api/publications/count`).then(r => { setPubCount(r.data.total); setPubByYear(r.data.byYear || null); }).catch(() => {});
     axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(() => {});
     axios.get(`${API_BASE}/api/eventbrite`).then(r => setEbData(r.data)).catch(() => {});
     axios.get(`${API_BASE}/api/social-data`).then(r => setSocial(r.data)).catch(() => {});
@@ -267,6 +268,13 @@ export default function Overview() {
   const researcherCount = infantMetrics?.researchers.length || 0;
   const firstYear = infantMetrics?.years[0];
   const lastYear = infantMetrics?.years[infantMetrics.years.length - 1];
+  // Publications and citations over the same years, from the verified list: each INFANT paper once.
+  // (Elsevier's per-researcher figures count a paper once per INFANT co-author, and include papers
+  // researchers wrote without an INFANT address, so they're not added up for these totals.)
+  const verifiedYears = (infantMetrics?.years || []).map(year => ({ year, ...(pubByYear?.[year] || { publications: 0, citations: 0, withCitationCount: 0 }) }));
+  const verifiedPublications = verifiedYears.reduce((sum, y) => sum + y.publications, 0);
+  const verifiedCitations = verifiedYears.reduce((sum, y) => sum + y.citations, 0);
+  const papersWithCitations = verifiedYears.reduce((sum, y) => sum + y.withCitationCount, 0);
 
   return (
     <div className="page">
@@ -342,17 +350,22 @@ export default function Overview() {
           <div style={sectionLabelStyle}>
             RESEARCH COLLABORATION — SCIVAL · SCOPUS · {rm.lastUpdated.toUpperCase()}
           </div>
+          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '-6px 0 12px' }}>
+            Entered from SciVal. Covers everything INFANT's researchers published, including work without an INFANT
+            address and letters or editorials, so it is higher than the verified INFANT publication count
+            {pubCount !== null ? ` (${pubCount.toLocaleString()})` : ''}.
+          </div>
 
           <div className="kpi-row" style={{ marginBottom: 16 }}>
             <div className="kpi-card">
-              <div className="kpi-label">Total scholarly output</div>
+              <div className="kpi-label">Scholarly output (SciVal)</div>
               <div className="kpi-value">{rm.totalScholarlyOutput.toLocaleString()}</div>
-              <div className="kpi-delta neutral">Scopus verified</div>
+              <div className="kpi-delta neutral">All papers by INFANT's SciVal researcher group</div>
             </div>
             <div className="kpi-card">
-              <div className="kpi-label">Total citations</div>
+              <div className="kpi-label">Citations (SciVal)</div>
               <div className="kpi-value">{rm.totalCitations.toLocaleString()}</div>
-              <div className="kpi-delta neutral">All time</div>
+              <div className="kpi-delta neutral">Of those papers</div>
             </div>
             <div className="kpi-card">
               <div className="kpi-label">International FWCI</div>
@@ -446,13 +459,17 @@ export default function Overview() {
           <div className="kpi-row" style={{ marginBottom: 16 }}>
             <div className="kpi-card">
               <div className="kpi-label">Publications ({firstYear}–{lastYear})</div>
-              <div className="kpi-value">{infantMetrics.totalOutput.toLocaleString()}</div>
-              <div className="kpi-delta neutral"><span className="status-dot live"></span>Live · Scopus</div>
+              <div className="kpi-value">{pubByYear ? verifiedPublications.toLocaleString() : '—'}</div>
+              <div className="kpi-delta neutral"><span className="status-dot live"></span>Verified INFANT papers · each counted once</div>
             </div>
             <div className="kpi-card">
-              <div className="kpi-label">Citations ({firstYear}–{lastYear})</div>
-              <div className="kpi-value">{infantMetrics.totalCitations.toLocaleString()}</div>
-              <div className="kpi-delta neutral"><span className="status-dot live"></span>Live · Scopus</div>
+              <div className="kpi-label">Citations ({firstYear}–{lastYear} papers)</div>
+              <div className="kpi-value">{pubByYear && papersWithCitations ? verifiedCitations.toLocaleString() : '—'}</div>
+              <div className="kpi-delta neutral">
+                {papersWithCitations
+                  ? `Scopus citations of ${papersWithCitations.toLocaleString()} of these ${verifiedPublications.toLocaleString()} papers`
+                  : 'Shown after the next publication list update'}
+              </div>
             </div>
             <div className="kpi-card">
               <div className="kpi-label">Avg FWCI per researcher</div>
@@ -469,14 +486,9 @@ export default function Overview() {
           <div className="grid-2" style={{ marginBottom: 24 }}>
             <div className="card">
               <div className="card-title">INFANT publications by year</div>
-              <div className="card-sub">
-                Added up across {researcherCount} researchers · Live from Scopus ·{' '}
-                <a href="https://www.scival.com" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-                  Powered by SciVal ↗
-                </a>
-              </div>
+              <div className="card-sub">Verified INFANT papers (articles and reviews) · Scopus + PubMed · each paper counted once</div>
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={infantMetrics.years.map(year => ({ year, publications: infantMetrics.scholarlyOutput[year] }))} margin={{ left: 0, right: 8 }}>
+                <BarChart data={verifiedYears} margin={{ left: 0, right: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="year" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} width={35} />
@@ -485,7 +497,7 @@ export default function Overview() {
                 </BarChart>
               </ResponsiveContainer>
               <div style={{ marginTop: 8, fontSize: 10, color: 'var(--muted-foreground)', fontStyle: 'italic' }}>
-                Co-authored papers count once per INFANT author, so totals may be higher than the number of unique papers.
+                Same list as the Publications page: a paper is counted once, however many INFANT authors it has.
               </div>
             </div>
 
@@ -586,7 +598,7 @@ export default function Overview() {
                   <tr><th>Source</th><th>Metric</th><th>Status</th><th>Value</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>PubMed</td><td>Total publications</td><td><span className="badge badge-green">Live</span></td><td>{pubCount !== null ? pubCount.toLocaleString() : '—'}</td></tr>
+                  <tr><td>Scopus + PubMed</td><td>Verified INFANT publications</td><td><span className="badge badge-green">Live</span></td><td>{pubCount !== null ? pubCount.toLocaleString() : '—'}</td></tr>
                   <tr><td>Eventbrite</td><td>Total events</td><td><span className="badge badge-green">Live</span></td><td>{ebData ? ebData.total.toLocaleString() : '—'}</td></tr>
                   <tr><td>Facebook</td><td>Followers</td><td><span className="badge badge-green">Live</span></td><td>{fbStats?.followers_count != null ? fbStats.followers_count.toLocaleString() : '—'}</td></tr>
                   <tr>
