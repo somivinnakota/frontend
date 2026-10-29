@@ -3,7 +3,6 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
-import * as XLSX from 'xlsx';
 
 /* =========================================================
    Config
@@ -202,7 +201,7 @@ function makeUniqueHeaders(rawHeaders) {
 
 // Returns data rows (used for charts) plus a layout that keeps the sheet's original
 // order, including label rows like "Q1" or notes, for the table.
-function parseSheet(name, worksheet) {
+function parseSheet(XLSX, name, worksheet) {
   const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null, raw: true, blankrows: false });
   if (matrix.length === 0) return { name, headers: [], rows: [], layout: [] };
 
@@ -260,13 +259,15 @@ export function readFile(file) {
       console.error('FileReader error:', reader.error);
       reject(new Error('The file could not be read. Try selecting it again.'));
     };
-    reader.onload = () => {
-      try {
+      reader.onload = async () => {
+        try {
+        // The spreadsheet library is large, so it's only downloaded when a file is uploaded.
+        const XLSX = await import('xlsx');
         // raw: true stops SheetJS guessing types in CSVs (e.g. dates becoming serial numbers).
         const workbook = isCsv
           ? XLSX.read(decodeText(reader.result), { type: 'string', raw: true })
           : XLSX.read(reader.result, { type: 'array', cellDates: true });
-        const sheets = workbook.SheetNames.map(name => parseSheet(name, workbook.Sheets[name]));
+        const sheets = workbook.SheetNames.map(name => parseSheet(XLSX, name, workbook.Sheets[name]));
         resolve({ fileName: file.name, sheets });
       } catch (err) {
         console.error('Failed to parse file:', err);

@@ -8,17 +8,24 @@ function localDate(isoDate) {
   return new Date(y, m - 1, d);
 }
 
+// Date labels are made once per date and reused: building a new formatter for every row
+// (toLocaleDateString) took over 2 seconds on the Social media page.
+const MONTH_FORMAT = new Intl.DateTimeFormat('en-IE', { month: 'short', year: '2-digit' });
+const DAY_FORMAT = new Intl.DateTimeFormat('en-IE', { day: 'numeric', month: 'short' });
+const labelCache = new Map();
+function labelsFor(isoDate) {
+  let labels = labelCache.get(isoDate);
+  if (!labels) {
+    const d = localDate(isoDate);
+    labels = { monthLabel: MONTH_FORMAT.format(d), dayLabel: DAY_FORMAT.format(d) };
+    labelCache.set(isoDate, labels);
+  }
+  return labels;
+}
+
 // Adds the labels the charts need.
 export function withLabels(rows = []) {
-  return rows.map(row => {
-    const d = localDate(row.date);
-    return {
-      ...row,
-      monthKey: row.date.slice(0, 7),
-      monthLabel: d.toLocaleDateString('en-IE', { month: 'short', year: '2-digit' }),
-      dayLabel: d.toLocaleDateString('en-IE', { day: 'numeric', month: 'short' }),
-    };
-  });
+  return rows.map(row => ({ ...row, monthKey: row.date.slice(0, 7), ...labelsFor(row.date) }));
 }
 
 export const forYear = (rows = [], year) => rows.filter(row => row.date.startsWith(`${year}-`));
@@ -41,7 +48,7 @@ export function aggregateByMonth(rows = []) {
 }
 
 export function formatDayMonth(isoDate) {
-  return isoDate ? localDate(isoDate).toLocaleDateString('en-IE', { day: 'numeric', month: 'short' }) : '';
+  return isoDate ? labelsFor(isoDate).dayLabel : '';
 }
 
 export const compactTick = v => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v);

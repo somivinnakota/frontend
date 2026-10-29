@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import * as XLSX from 'xlsx';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import { formatDayMonth } from '../utils/social';
@@ -39,6 +38,7 @@ const cellValue = v => (v instanceof Date
 async function prepareFile(file) {
   const buffer = await file.arrayBuffer();
   if (/\.csv$/i.test(file.name)) return { name: file.name, data: toBase64(buffer) };
+  const XLSX = await import('xlsx'); // loaded only when an Excel file is uploaded
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   return {
     name: file.name,

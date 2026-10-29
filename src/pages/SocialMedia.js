@@ -186,6 +186,7 @@ export default function SocialMedia() {
     const prevYear = year - 1;
     const series = {};
     for (const [name, rows] of Object.entries(social.series)) {
+      if (!/^(ig|fb)-/.test(name)) continue;
       series[name] = {
         current: withLabels(forYear(rows, year)),
         previous: withLabels(forYear(rows, prevYear)),
