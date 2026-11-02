@@ -4,6 +4,8 @@ import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import { downloadReportPdf } from '../utils/pdf';
 import { storageKeyFor, loadWorkbook } from '../components/SmartSheet';
+import { analyseKpis } from './KPIDashboard';
+import { analyseConferences } from './Conferences';
 
 const REPORT_TYPES = [
   { id: 'quarterly', label: 'Quarterly' },
@@ -40,12 +42,50 @@ const LEVEL_STYLE = {
 
 const formatDate = iso => new Date(iso).toLocaleDateString('en-IE', { day: 'numeric', month: 'long', year: 'numeric' });
 
+const pad = n => String(n).padStart(2, '0');
+
+// The KPI tracker and conference list have no usable date column, so the report can't split them
+// by period from the raw rows. Their own pages already read them properly, so send that instead:
+// KPIs as one value per quarter, conferences dated to the start of their quarter.
+function kpiUpload(workbook) {
+  const data = workbook.sheets.map(analyseKpis).find(Boolean);
+  if (!data) return null;
+  return {
+    fileName: workbook.fileName,
+    kpis: data.kpis.map(({ id, name, quarters, target, result }) => ({ id, name, quarters, target, result })),
+  };
+}
+
+function conferenceUpload(workbook) {
+  const conferences = analyseConferences(workbook);
+  if (!conferences) return null;
+  const placed = conferences.filter(c => c.year && c.quarter);
+  const types = [...new Set(placed.flatMap(c => Object.keys(c.counts)))];
+  const unplaced = conferences.length - placed.length;
+  return {
+    fileName: workbook.fileName,
+    note: `Conferences are dated to the start of their quarter; exact dates are not recorded.${unplaced ? ` ${unplaced} without a quarter or year are left out.` : ''}`,
+    sheets: [{
+      name: 'Conferences',
+      headers: ['Date', 'Conference', 'Scope', 'Theme', ...types],
+      rows: placed.map(c => ({
+        Date: `${c.year}-${pad(c.quarter * 3 - 2)}-01`,
+        Conference: c.name,
+        Scope: c.scope.trim(),
+        Theme: [...c.themes].join(', '),
+        ...Object.fromEntries(types.map(t => [t, c.counts[t] || 0])),
+      })),
+    }],
+  };
+}
+
 function collectUploads() {
   const uploads = {};
   for (const [key, title] of Object.entries(UPLOADS)) {
     const workbook = loadWorkbook(storageKeyFor(title));
     if (!workbook) continue;
-    uploads[key] = {
+    const understood = key === 'kpis' ? kpiUpload(workbook) : key === 'conferences' ? conferenceUpload(workbook) : null;
+    uploads[key] = understood || {
       fileName: workbook.fileName,
       sheets: workbook.sheets.map(s => ({ name: s.name, headers: s.headers, rows: s.rows.slice(0, 3000) })),
     };

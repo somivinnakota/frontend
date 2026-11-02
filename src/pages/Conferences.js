@@ -32,7 +32,7 @@ function similar(a, b) {
   return (2 * shared) / ((x.length + shared + y.length) || 1) >= 0.85;
 }
 
-function analyse(workbook) {
+export function analyseConferences(workbook) {
   const conferences = [];
   const missing = [];
   for (const sheet of workbook.sheets) {
@@ -128,7 +128,7 @@ function Chart({ title, sub, data, horizontal }) {
 }
 
 function ConferenceSummary({ workbook, fallback }) {
-  const conferences = useMemo(() => analyse(workbook), [workbook]);
+  const conferences = useMemo(() => analyseConferences(workbook), [workbook]);
   if (!conferences) return fallback; // not a conference list: show the normal charts
 
   const years = [...new Set(conferences.map(c => c.year).filter(Boolean))].sort();

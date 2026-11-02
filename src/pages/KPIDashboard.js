@@ -18,7 +18,7 @@ const number = v => {
 };
 const whole = v => (v === null ? '–' : Number(v).toLocaleString('en-IE', { maximumFractionDigits: Math.abs(v) < 10 && v % 1 ? 2 : 0 }));
 
-function analyse(sheet) {
+export function analyseKpis(sheet) {
   const { headers, rows } = sheet;
   if (!rows.length) return null;
   const values = h => rows.map(r => text(r[h])).filter(Boolean);
@@ -97,7 +97,7 @@ function Progress({ result, target }) {
 }
 
 function KPISummary({ workbook, fallback }) {
-  const sheets = useMemo(() => workbook.sheets.map(analyse), [workbook]);
+  const sheets = useMemo(() => workbook.sheets.map(analyseKpis), [workbook]);
   const data = sheets.find(Boolean);
   // Open on the latest year with a real (non-zero) figure; placeholder 0s for a future year don't count.
   const filled = (k, y) => [k.result[y], ...k.quarters.filter(q => q.year === y).map(q => q.value)].some(v => v);
