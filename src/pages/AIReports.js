@@ -133,8 +133,39 @@ function reportToText(record) {
     lines.push('');
   }
   if (r.annual_summary) lines.push('ANNUAL SUMMARY', r.annual_summary, '');
-  if (r.data_gaps.length) { lines.push('DATA NOT AVAILABLE'); r.data_gaps.forEach(g => lines.push(`- ${g}`)); }
+  if (r.data_gaps.length) { lines.push('DATA NOT AVAILABLE'); r.data_gaps.forEach(g => lines.push(`- ${g}`)); lines.push(''); }
+  const m = record.methodology;
+  if (m) {
+    lines.push('METHODOLOGY', `Reporting period: ${m.periods}`);
+    if (m.sources.length) lines.push(`Sources: ${m.sources.join(', ')}.`);
+    if (m.missing.length) lines.push(`Not included: ${m.missing.join('; ')}.`);
+    if (m.partial_coverage.length) lines.push(`Partial data in the period: ${m.partial_coverage.join('; ')}.`);
+    lines.push('Limitations:', ...m.limitations.map(l => `- ${l}`));
+    if (m.glossary) lines.push(m.glossary);
+  }
   return lines.join('\n');
+}
+
+// The methodology note the engagement glossary asks for: periods, sources, missing data, limitations.
+function Methodology({ note }) {
+  if (!note) return null;
+  const row = (label, text) => text && (
+    <p style={{ fontSize: 13, lineHeight: 1.7, margin: '0 0 6px' }}><strong>{label}:</strong> {text}</p>
+  );
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div className="card-title" style={{ marginBottom: 8 }}>Methodology</div>
+      {row('Reporting period', note.periods)}
+      {row('Sources', note.sources.length ? `${note.sources.join(', ')}.` : '')}
+      {row('Not included', note.missing.length ? `${note.missing.join('; ')}.` : '')}
+      {row('Partial data in the period', note.partial_coverage.length ? `${note.partial_coverage.join('; ')}.` : '')}
+      <p style={{ fontSize: 13, lineHeight: 1.7, margin: '0 0 4px' }}><strong>Limitations:</strong></p>
+      <ul style={{ fontSize: 13, lineHeight: 1.7, margin: '0 0 6px', paddingLeft: 20 }}>
+        {note.limitations.map(l => <li key={l}>{l}</li>)}
+      </ul>
+      {note.glossary && <p style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: 0 }}>{note.glossary}</p>}
+    </div>
+  );
 }
 
 /* ── Small display pieces ────────────────────────────────────── */
@@ -311,6 +342,8 @@ function ReportView({ record, onRegenerate, busy }) {
           <strong>Not covered by this report:</strong> {r.data_gaps.join(' ')}
         </div>
       )}
+
+      <Methodology note={record.methodology} />
     </div>
   );
 }
