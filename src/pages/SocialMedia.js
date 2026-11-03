@@ -31,20 +31,20 @@ const INSTAGRAM_CHARTS = [
   ['ig-clicks', 'Link clicks', 'Bio link clicks', '#dc2626'],
 ];
 const FACEBOOK_CARDS = [
-  ['fb-views', 'Total views'], ['fb-visits', 'Total visits'], ['fb-interactions', 'Total interactions'], ['fb-clicks', 'Link clicks'],
+  ['fb-views', 'Total views'], ['fb-visits', 'Total visits'], ['fb-interactions', 'Total interactions'], ['fb-clicks', 'Total impressions'],
 ];
 const FACEBOOK_CHARTS = [
   ['fb-views', 'Views', 'Monthly content views', '#53266a'],
   ['fb-visits', 'Page visits', 'Monthly page visits', '#059669'],
   ['fb-interactions', 'Interactions', 'Likes, comments and shares', '#7c3aed'],
-  ['fb-clicks', 'Link clicks', 'Clicks on page links', '#dc2626'],
+  ['fb-clicks', 'Impressions', 'Total times content appeared in feeds', '#dc2626'],
 ];
 
 // The glossary entry (eye-icon tooltip) for each series' card.
 const GLOSSARY_IDS = {
   'ig-reach': 'reach', 'ig-views': 'views', 'ig-interactions': 'interactions', 'ig-visits': 'profile_visits',
   'ig-follows': 'follower_growth', 'ig-clicks': 'link_clicks',
-  'fb-views': 'views', 'fb-visits': 'profile_visits', 'fb-interactions': 'interactions', 'fb-clicks': 'link_clicks',
+  'fb-views': 'views', 'fb-visits': 'profile_visits', 'fb-interactions': 'interactions', 'fb-clicks': 'views',
 };
 
 function pctChange(current, previous) {
@@ -158,6 +158,7 @@ export default function SocialMedia() {
   const [view, setView] = useState('compare');
   const [fbStats, setFbStats] = useState(null);
   const [social, setSocial] = useState(null);
+  const [metaStatus, setMetaStatus] = useState(null);
   const [error, setError] = useState('');
 
   const loadSocial = useCallback(() => {
@@ -168,6 +169,7 @@ export default function SocialMedia() {
 
   useEffect(() => {
     axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(() => {});
+    axios.get(`${API_BASE}/api/meta-status`).then(r => setMetaStatus(r.data)).catch(() => {});
     loadSocial();
   }, [loadSocial]);
 
@@ -186,7 +188,6 @@ export default function SocialMedia() {
     const prevYear = year - 1;
     const series = {};
     for (const [name, rows] of Object.entries(social.series)) {
-      if (!/^(ig|fb)-/.test(name)) continue;
       series[name] = {
         current: withLabels(forYear(rows, year)),
         previous: withLabels(forYear(rows, prevYear)),
@@ -216,12 +217,16 @@ export default function SocialMedia() {
 
   const comparisonNote = platform => {
     const latest = prepared?.latest[platform];
+    const isLive = dataSource === 'meta-api';
     return prepared && (
       <div className="info-note">
         {latest
-          ? <><strong>Data up to {formatDayMonth(latest)} {latest.slice(0, 4)}.</strong> </>
+          ? <><strong>Data up to {formatDayMonth(latest)} {latest.slice(0, 4)}.</strong>{' '}</>
           : null}
-        Each figure compares 1 Jan {prepared.year} up to its latest uploaded day with the same days in {prepared.prevYear}, for a fair like-for-like comparison.
+        {isLive
+          ? <span style={{ color: '#15803d' }}>Live from Meta Graph API · auto-refreshes every 30 min. </span>
+          : null}
+        Each figure compares 1 Jan {prepared.year} up to its latest day with the same days in {prepared.prevYear}, for a fair like-for-like comparison.
       </div>
     );
   };
@@ -230,6 +235,10 @@ export default function SocialMedia() {
     const totals = prepared.toDate(name);
     return <CompareCard key={name} label={label} current={totals.current} previous={totals.previous} prevYear={prepared.prevYear} glossaryId={GLOSSARY_IDS[name]} />;
   });
+
+  const apiConnected = metaStatus?.instagram && metaStatus?.facebook;
+  const apiPartial = !apiConnected && (metaStatus?.instagram || metaStatus?.facebook);
+  const dataSource = social?.dataSource;
 
   return (
     <div className="page">
@@ -240,6 +249,33 @@ export default function SocialMedia() {
           <div className="page-sub">
             Instagram · Facebook · LinkedIn{prepared ? ` · ${prepared.year} vs ${prepared.prevYear} comparison` : ''}
           </div>
+          {metaStatus && (
+            <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500,
+                background: apiConnected ? '#f0fdf4' : apiPartial ? '#fffbeb' : '#fef2f2',
+                color: apiConnected ? '#15803d' : apiPartial ? '#b45309' : '#b91c1c',
+                border: `1px solid ${apiConnected ? '#bbf7d0' : apiPartial ? '#fde68a' : '#fecaca'}`,
+                borderRadius: 20, padding: '3px 10px',
+              }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: apiConnected ? '#22c55e' : apiPartial ? '#f59e0b' : '#ef4444',
+                  flexShrink: 0,
+                }} />
+                {apiConnected
+                  ? 'Meta API · Live data'
+                  : apiPartial
+                    ? `Meta API · Partial (${metaStatus.facebook ? 'Facebook' : ''}${metaStatus.instagram ? 'Instagram' : ''} only)`
+                    : 'Meta API · Not connected'}
+              </span>
+              {dataSource === 'meta-api' && (
+                <span style={{
+                  fontSize: 11, color: '#6b7280', fontStyle: 'italic', alignSelf: 'center',
+                }}>No CSV upload needed</span>
+              )}
+            </div>
+          )}
         </div>
         <div className="btn-row">
           <button className={`btn-secondary${view === 'compare' ? ' active-toggle' : ''}`} onClick={() => setView('compare')}>
@@ -268,7 +304,9 @@ export default function SocialMedia() {
       )}
       {social && !prepared && activeTab !== 'linkedin' && (
         <div style={{ color: 'var(--muted-foreground)', fontSize: 13, padding: '20px 0' }}>
-          No social media data yet. Click "Upload analytics files" below and add the Meta Business Suite exports.
+          {apiConnected
+            ? 'Loading live data from the Meta Graph API… If data doesn\'t appear, the Instagram account may not have enough history yet.'
+            : 'No social media data yet. The Meta API is not connected — click "Upload analytics files" below to import Meta Business Suite exports, or check that FACEBOOK_ACCESS_TOKEN is set in the server .env file.'}
         </div>
       )}
 
@@ -329,7 +367,16 @@ export default function SocialMedia() {
       {activeTab === 'mailchimp' && <MailchimpPanel />}
 
       <div style={{ marginTop: 24 }}>
-        <SocialUpload onUploaded={loadSocial} startOpen={Boolean(social && !social.latestDate)} />
+        {/* When live API is connected, collapse the upload panel by default */}
+        <SocialUpload
+          onUploaded={loadSocial}
+          startOpen={Boolean(social && !social.latestDate && !apiConnected)}
+        />
+        {apiConnected && (
+          <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 8 }}>
+            CSV uploads are optional — they fill in historical data older than what the Meta API covers (typically before Oct 2025).
+          </p>
+        )}
       </div>
     </div>
   );

@@ -96,7 +96,9 @@ export default function Publications() {
     return !term || [p.title, p.authors, p.journal, p.doi, p.evidence].some(v => String(v || '').toLowerCase().includes(term));
   });
 
-  const sourceLine = data && Object.entries(data.sources).map(([key, s]) => (
+  // If the latest update failed (e.g. Scopus refused the key), the last complete list is kept and
+  // the failed attempt's results are shown here instead.
+  const sourceLine = data && Object.entries(data.lastAttempt?.sources || data.sources).map(([key, s]) => (
     <span key={key} style={{ color: s.ok ? 'var(--muted-foreground)' : 'var(--destructive)', marginRight: 14, whiteSpace: 'nowrap' }}>
       {s.ok ? '✅' : '⚠️'} {SOURCE_NAMES[key] || key}: {s.ok ? `${(s.found ?? 0).toLocaleString()}` : s.error}
     </span>
@@ -152,6 +154,11 @@ export default function Publications() {
               Updated {new Date(data.updatedAt).toLocaleString('en-IE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
             </div>
             <div>{sourceLine}</div>
+                        {data.lastAttempt && (
+              <div style={{ color: 'var(--destructive)' }}>
+                The latest update ({new Date(data.lastAttempt.at).toLocaleString('en-IE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}) couldn't reach every database, so the last complete list is shown. It updates again once the problem above is fixed.
+              </div>
+            )}
           </div>
 
           <div className="kpi-row">
