@@ -157,6 +157,7 @@ export default function SocialMedia() {
   const [activeTab, setActiveTab] = useState('instagram');
   const [view, setView] = useState('compare');
   const [fbStats, setFbStats] = useState(null);
+  const [igStats, setIgStats] = useState(null);
   const [social, setSocial] = useState(null);
   const [metaStatus, setMetaStatus] = useState(null);
   const [error, setError] = useState('');
@@ -167,8 +168,9 @@ export default function SocialMedia() {
       .catch(e => setError(errorMessage(e, 'Could not load social media data. Make sure the backend is running.')));
   }, []);
 
-  useEffect(() => {
+    useEffect(() => {
     axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(() => {});
+    axios.get(`${API_BASE}/api/instagram`).then(r => setIgStats(r.data)).catch(() => {});
     axios.get(`${API_BASE}/api/meta-status`).then(r => setMetaStatus(r.data)).catch(() => {});
     loadSocial();
   }, [loadSocial]);
@@ -312,8 +314,37 @@ export default function SocialMedia() {
 
       {prepared && activeTab === 'instagram' && (
         <>
-          {comparisonNote('instagram')}
-          <div className="kpi-row">{cards(INSTAGRAM_CARDS.slice(0, 4))}</div>
+                    {comparisonNote('instagram')}
+          <div className="kpi-row">
+            <div className="kpi-card">
+              <div className="kpi-label">Followers (live)</div>
+              <div className="kpi-value">{igStats?.followers_count?.toLocaleString() ?? '—'}</div>
+              <div className="kpi-delta neutral"><span className="status-dot live"></span>Live</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Interactions (live)</div>
+              <div className="kpi-value">{igStats?.interactions_7d?.toLocaleString() ?? '—'}</div>
+              <div className="kpi-delta neutral"><span className="status-dot live"></span>Last 7 days</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Engagement rate (7-day)</div>
+              <div className="kpi-value">
+                {igStats?.followers_count > 0 && igStats?.interactions_7d != null
+                  ? `${((igStats.interactions_7d / igStats.followers_count) * 100).toFixed(2)}%` : '—'}
+              </div>
+              <div className="kpi-delta neutral">Interactions ÷ followers</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Platform</div>
+              <div className="kpi-value" style={{ fontSize: 16, paddingTop: 4 }}>Instagram</div>
+              <div className="kpi-delta neutral">
+                <span className={`status-dot${igStats ? ' live' : ''}`}></span>
+                {igStats ? `@${igStats.username} · ${igStats.media_count?.toLocaleString()} posts` : 'Not responding'}
+              </div>
+            </div>
+          </div>
+          <div className="kpi-row">{cards(INSTAGRAM_CARDS.slice(0, 4))}
+          </div>
           <div className="kpi-row">
             {cards(INSTAGRAM_CARDS.slice(4))}
             {['ig-reach', 'ig-views'].map(name => {
