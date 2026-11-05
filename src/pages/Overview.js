@@ -8,7 +8,7 @@ import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import { withLabels, forYear, aggregateByMonth, sumValues, compactTick } from '../utils/social';
 
-const ELSEVIER_KEY = '';
+const ELSEVIER_KEY = '4c22960291ad9b6a7a871ec1ab076640';
 const COLLAB_COLORS = ['#1d4ed8', '#059669', '#7c3aed', '#d97706'];
 const tooltipStyle = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--card)' };
 const sectionLabelStyle = { fontSize: 10, color: 'var(--muted-foreground)', marginBottom: 10, fontWeight: 600, letterSpacing: '0.1em' };
