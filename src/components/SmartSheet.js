@@ -25,6 +25,8 @@ const LABEL_MAX_SHARE = 0.5;      // and only if labels are a minority of rows
 const SECTION_MAX_LENGTH = 30;    // short labels are section headings, longer ones are notes
 
 const DATE_HEADER_HINT = /date|time|year|month|published|created|updated|period|week/i;
+// Number columns that label a row rather than measure something, so adding them up is meaningless.
+const LABEL_NUMBER_HEADER = /^(q|qtr|quarter|year|yr|month|week|day|id|ref|no\.?|number|#|row|index)$|\b(quarter|year|id|ref)\b/i;
 const NUMBER_NOISE = /[€$£%,\s]/g;
 
 const CHART_COLORS = ['#1d4ed8', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#db2777', '#65a30d'];
@@ -112,7 +114,7 @@ export function detectFields(headers, rows) {
 
     let kind = 'text';
     if (dateRatio >= dateThreshold) kind = 'date';
-    else if (numericRatio >= NUMERIC_THRESHOLD) kind = 'numeric';
+    else if (numericRatio >= NUMERIC_THRESHOLD && !LABEL_NUMBER_HEADER.test(header.trim())) kind = 'numeric';
     else if (
       unique <= MAX_CATEGORY_VALUES &&
       unique < Math.max(count * CATEGORY_UNIQUE_RATIO, MIN_CATEGORY_CEILING)
@@ -122,21 +124,29 @@ export function detectFields(headers, rows) {
   });
 }
 
+// Adds up valueField per month, or counts rows when there's no valueField.
+// Months with nothing in them are included as 0, so gaps show instead of being skipped.
 function sumByMonth(rows, dateField, valueField) {
   const totals = new Map();
   for (const row of rows) {
     const date = parseDate(row[dateField]);
-    const value = toNum(row[valueField]);
+    const value = valueField ? toNum(row[valueField]) : 1;
     if (!date || Number.isNaN(value)) continue;
     const key = toMonthKey(date);
     totals.set(key, (totals.get(key) ?? 0) + value);
   }
-  // YYYY-MM keys sort chronologically as strings.
-  return [...totals.keys()].sort().map(key => {
-    const [y, m] = key.split('-').map(Number);
+  const keys = [...totals.keys()].sort(); // YYYY-MM keys sort chronologically as strings
+  if (!keys.length) return [];
+  const result = [];
+  let [y, m] = keys[0].split('-').map(Number);
+  const [lastY, lastM] = keys[keys.length - 1].split('-').map(Number);
+  while (y < lastY || (y === lastY && m <= lastM)) {
+    const key = `${y}-${pad(m)}`;
     const period = new Date(y, m - 1, 1).toLocaleDateString('en-IE', { month: 'short', year: '2-digit' });
-    return { period, value: totals.get(key) };
-  });
+    result.push({ key, period, value: totals.get(key) ?? 0 });
+    if (++m > 12) { m = 1; y += 1; }
+  }
+  return result;
 }
 
 // Sums valueField per category, or counts rows when there's no valueField.
@@ -446,19 +456,26 @@ function FieldPicker({ label, options, value, onChange }) {
    ========================================================= */
 
 // Rendered with a key per file/sheet, so selections reset when the sheet changes.
-function SmartChart({ sheet }) {
+// countLabel: what one row is (e.g. "Mentions"). When given, counting rows is the default metric;
+// otherwise counting is offered as an option alongside the sheet's number columns.
+function SmartChart({ sheet, countLabel }) {
   const fields = useMemo(() => detectFields(sheet.headers, sheet.rows), [sheet]);
   const byKind = kind => fields.filter(f => f.kind === kind).map(f => f.header);
-  const numericFields = byKind('numeric');
   const dateFields = byKind('date');
   const categoryFields = byKind('category');
+  const countName = countLabel || 'Rows';
+  const realNumbers = byKind('numeric');
+  // "Number of rows" is always an option; it's the default when the page says what a row is
+  // or when the sheet has no columns worth adding up.
+  const metricOptions = countLabel || !realNumbers.length ? [countName, ...realNumbers] : [...realNumbers, countName];
 
-  const [numericField, setNumericField] = useState(numericFields[0]);
+  const [metric, setMetric] = useState(metricOptions[0]);
+  const numericField = metric === countName ? null : metric;
   const [dateField, setDateField] = useState(dateFields[0]);
   const [categoryField, setCategoryField] = useState(categoryFields[0]);
 
   const timeData = useMemo(
-    () => (dateField && numericField ? sumByMonth(sheet.rows, dateField, numericField) : []),
+    () => (dateField ? sumByMonth(sheet.rows, dateField, numericField) : []),
     [sheet, dateField, numericField],
   );
   const categoryData = useMemo(
@@ -469,12 +486,28 @@ function SmartChart({ sheet }) {
     () => (numericField ? summarise(sheet.rows, numericField) : null),
     [sheet, numericField],
   );
+  // Headline cards when counting rows: total, monthly average, busiest month, top group.
+  const countCards = useMemo(() => {
+    if (numericField) return null;
+    const cards = [{ label: `Total ${countName.toLowerCase()}`, value: sheet.rows.length.toLocaleString('en-IE') }];
+    if (timeData.length) {
+      const busiest = timeData.reduce((a, b) => (b.value > a.value ? b : a));
+      const counted = timeData.reduce((t, d) => t + d.value, 0);
+      cards.push({ label: 'Average per month', value: (counted / timeData.length).toLocaleString('en-IE', { maximumFractionDigits: 1 }) });
+      cards.push({ label: 'Busiest month', value: busiest.period, note: `${busiest.value} ${countName.toLowerCase()}` });
+    }
+    if (categoryData.length) {
+      const top = categoryData[0];
+      cards.push({ label: `Top ${categoryField}`, value: top.name, note: `${top.value} of ${sheet.rows.length} (${Math.round(top.value / sheet.rows.length * 100)}%)` });
+    }
+    return cards;
+  }, [numericField, countName, sheet, timeData, categoryData, categoryField]);
 
   if (sheet.rows.length === 0) {
     return <EmptyState>This sheet has no data rows.</EmptyState>;
   }
-  if (!numericField && !categoryField) {
-    return <EmptyState>No numeric or category columns found. Charts appear when the sheet has numbers or repeated labels to group by.</EmptyState>;
+  if (!numericField && !categoryField && !dateField) {
+    return <EmptyState>No date, number or category columns found. Charts appear when the sheet has dates, numbers or repeated labels to group by.</EmptyState>;
   }
 
   const hasBothCharts = timeData.length > 0 && categoryData.length > 0;
@@ -482,10 +515,22 @@ function SmartChart({ sheet }) {
   return (
     <div>
       <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
-        <FieldPicker label="Metric" options={numericFields} value={numericField} onChange={setNumericField} />
+        <FieldPicker label="Measure" options={metricOptions} value={metric} onChange={setMetric} />
         <FieldPicker label="Date" options={dateFields} value={dateField} onChange={setDateField} />
         <FieldPicker label="Group by" options={categoryFields} value={categoryField} onChange={setCategoryField} />
       </div>
+
+      {countCards && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
+          {countCards.map(({ label, value, note }) => (
+            <div key={label} className="kpi-card">
+              <div className="kpi-label">{label}</div>
+              <div className="kpi-value" style={String(value).length > 10 ? { fontSize: 18 } : undefined}>{value}</div>
+              {note && <div className="kpi-delta neutral">{note}</div>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {stats && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
@@ -509,17 +554,27 @@ function SmartChart({ sheet }) {
       }}>
         {timeData.length > 0 && (
           <div className="card">
-            <div className="card-title">{numericField} over time</div>
-            <div className="card-sub">{dateField} · monthly totals</div>
+            <div className="card-title">{metric} per month</div>
+            <div className="card-sub">{dateField} · {numericField ? 'monthly totals' : 'number per month'}</div>
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={timeData} margin={{ left: 0, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="period" tick={axisTick} axisLine={false} tickLine={false} />
-                <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40}
-                  tickFormatter={v => compactNumber.format(v)} />
-                <Tooltip contentStyle={tooltipStyle} formatter={v => [formatNumber(v), numericField]} />
-                <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={timeData.length === 1} />
-              </LineChart>
+              {numericField ? (
+                <LineChart data={timeData} margin={{ left: 0, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="period" tick={axisTick} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40}
+                    tickFormatter={v => compactNumber.format(v)} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={v => [formatNumber(v), metric]} />
+                  <Line type="linear" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={timeData.length <= 12} />
+                </LineChart>
+              ) : (
+                <BarChart data={timeData} margin={{ left: 0, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="period" tick={axisTick} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={v => [formatNumber(v), metric]} />
+                  <Bar dataKey="value" fill="var(--accent)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                </BarChart>
+              )}
             </ResponsiveContainer>
           </div>
         )}
@@ -527,9 +582,9 @@ function SmartChart({ sheet }) {
         {categoryData.length > 0 && (
           <div className="card">
             <div className="card-title">
-              {numericField ? `${numericField} by ${categoryField}` : `Count by ${categoryField}`}
+              {metric} by {categoryField}
             </div>
-            <div className="card-sub">Top {categoryData.length} values</div>
+            <div className="card-sub">Top {categoryData.length} · {numericField ? `${numericField} added up` : `number of ${metric.toLowerCase()}`}</div>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={categoryData} layout="vertical" margin={{ left: 0, right: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
@@ -538,7 +593,7 @@ function SmartChart({ sheet }) {
                 <YAxis dataKey="name" type="category" tick={axisTick} width={140}
                   axisLine={false} tickLine={false} tickFormatter={v => truncate(String(v))} />
                 <Tooltip contentStyle={tooltipStyle}
-                  formatter={v => [formatNumber(v), numericField || 'Count']} />
+                  formatter={v => [formatNumber(v), metric]} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={22}>
                   {categoryData.map((entry, i) => (
                     <Cell key={entry.name} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -696,7 +751,7 @@ function DataTable({ sheet }) {
 
 // `summary` (optional): a component that analyses the whole workbook for a specific page, e.g. the
 // conference list. It gets the generic charts as `fallback` to show when it doesn't recognise the file.
-export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, summary: Summary }) {
+export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, summary: Summary, countLabel }) {
   const storageKey = useMemo(() => storageKeyFor(title), [title]);
 
   const [workbook, setWorkbook] = useState(() => loadWorkbook(storageKey));
@@ -814,8 +869,8 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
           </div>
 
           {activeTab === 'table' ? <DataTable key={viewKey} sheet={sheet} />
-            : Summary ? <Summary key={viewKey} workbook={workbook} fallback={<SmartChart sheet={sheet} />} />
-            : <SmartChart key={viewKey} sheet={sheet} />}
+            : Summary ? <Summary key={viewKey} workbook={workbook} fallback={<SmartChart sheet={sheet} countLabel={countLabel} />} />
+            : <SmartChart key={viewKey} sheet={sheet} countLabel={countLabel} />}
         </>
       )}
     </div>
