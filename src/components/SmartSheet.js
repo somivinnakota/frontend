@@ -1,8 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
+import UploadPreview from './UploadPreview';
+import { getSheet, previewUpload, applyUpload, undoLast, clearSheet } from '../utils/sheets';
+import { errorMessage } from '../utils/errors';
 
 /* =========================================================
    Config
@@ -298,10 +301,12 @@ function decodeText(buffer) {
 }
 
 /* =========================================================
-   Saving between visits
+   Sheets saved in a browser (before shared saving)
    ========================================================= */
 
-// Each SmartSheet title gets its own saved slot, e.g. "smartsheet-events".
+// Sheets used to be saved in each browser. They are now saved on the server (utils/sheets.js);
+// a copy still in this browser is offered for moving across once, then removed.
+// Each title had its own slot, e.g. "smartsheet-events".
 export function storageKeyFor(title) {
   const slug = String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `smartsheet-${slug || 'data'}`;
@@ -326,16 +331,6 @@ export function loadWorkbook(key) {
     return isValidWorkbook(data) ? data : null;
   } catch {
     return null;
-  }
-}
-
-function saveWorkbook(key, data) {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-    return true;
-  } catch (err) {
-    console.warn('Could not save workbook:', err);
-    return false;
   }
 }
 
@@ -754,51 +749,77 @@ function DataTable({ sheet }) {
 export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, summary: Summary, countLabel }) {
   const storageKey = useMemo(() => storageKeyFor(title), [title]);
 
-  const [workbook, setWorkbook] = useState(() => loadWorkbook(storageKey));
+  const [workbook, setWorkbook] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [browserCopy, setBrowserCopy] = useState(() => loadWorkbook(storageKey));
+  const [pending, setPending] = useState(null); // an upload waiting for Apply: { upload, mode, preview, fromBrowser }
   const [activeSheet, setActiveSheet] = useState(0);
   const [activeTab, setActiveTab] = useState('charts');
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  // Every server answer has the same shape, so one function shows it.
+  const show = useCallback(data => {
+    setWorkbook(data.workbook);
+    setHistory(data.history);
+    setCanUndo(data.canUndo);
+    setActiveSheet(0);
+  }, []);
+
+  useEffect(() => {
+    getSheet(title)
+      .then(show)
+      .catch(e => setError(errorMessage(e, 'Could not load the saved sheet. Make sure the backend is running.')))
+      .finally(() => setLoading(false));
+  }, [title, show]);
+
+  // Runs a server call with the busy state and error handling every button needs.
+  const run = async (call, failure) => {
+    setError('');
+    setBusy(true);
+    try { return await call(); } catch (e) { setError(errorMessage(e, failure)); return null; } finally { setBusy(false); }
+  };
+
+  // Step 1 of every upload: ask the server what it would change. Nothing is saved yet.
+  const startPreview = (upload, mode = 'merge', fromBrowser = false) => run(async () => {
+    const preview = await previewUpload(title, upload, mode);
+    setPending({ upload, mode, preview, fromBrowser });
+  }, 'Could not check this file against the saved sheet. Make sure the backend is running.');
 
   const handleFile = async (e) => {
     const input = e.target;
     const file = input.files?.[0];
     input.value = ''; // lets the same file be chosen again
     if (!file) return;
-
     setError('');
-    setNotice('');
-    setLoading(true);
+    setBusy(true);
     try {
-      const data = await readFile(file);
-      setWorkbook(data);
-      setActiveSheet(0);
-      setActiveTab('charts');
-
-      // Saving under the same key overwrites the previous file.
-      if (!saveWorkbook(storageKey, data)) {
-        // If the new file can't be saved, remove the old one so it doesn't come back on refresh.
-        removeWorkbook(storageKey);
-        setNotice('This file is too large to save between visits. It stays loaded until you refresh or close the page.');
-      }
+      const upload = await readFile(file);
+      setBusy(false);
+      await startPreview(upload);
     } catch (err) {
-      // A failed upload leaves the current file (and its saved copy) untouched.
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      setError(err.message); // a file that can't be read changes nothing
+      setBusy(false);
     }
   };
 
-  const clearWorkbook = () => {
-    setWorkbook(null);
-    setActiveSheet(0);
+  // Step 2: Apply saves the upload exactly as previewed (merged, or replacing everything).
+  const apply = () => run(async () => {
+    const data = await applyUpload(title, pending.upload, pending.mode === 'replace' ? 'replace' : pending.fromBrowser ? 'move' : 'merge');
+    if (pending.fromBrowser) { removeWorkbook(storageKey); setBrowserCopy(null); }
+    setPending(null);
     setActiveTab('charts');
-    setError('');
-    setNotice('');
-    removeWorkbook(storageKey);
-  };
+    show(data);
+  }, 'The sheet could not be saved. Nothing was changed.');
 
+  const undo = () => run(async () => show(await undoLast(title)), 'Could not undo the last change.');
+  const clear = () => run(async () => show(await clearSheet(title)), 'Could not clear the sheet.');
+  const discardBrowserCopy = () => { removeWorkbook(storageKey); setBrowserCopy(null); };
+
+  const last = history[0];
+  const when = at => (at ? new Date(at).toLocaleString('en-IE', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
   const sheet = workbook ? (workbook.sheets[activeSheet] ?? workbook.sheets[0]) : null;
   const viewKey = workbook ? `${workbook.fileName}-${activeSheet}` : 'empty';
 
@@ -810,24 +831,73 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
           <div className="page-title">{title}</div>
           {subtitle && <div className="page-sub">{subtitle}</div>}
         </div>
-        {workbook && (
+        {(workbook || canUndo) && (
           <div className="btn-row">
-            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{workbook.fileName}</span>
-            <label className="btn-secondary" style={{ cursor: loading ? 'wait' : 'pointer', position: 'relative' }}>
-              {loading ? 'Reading file...' : 'Replace file'}
-              <input type="file" accept={ACCEPT} onChange={handleFile} disabled={loading} style={visuallyHidden} />
-            </label>
-            <button type="button" className="btn-secondary" onClick={clearWorkbook} disabled={loading}>
-              Clear
-            </button>
+            {workbook && (
+              <label className="btn-secondary" style={{ cursor: busy ? 'wait' : 'pointer', position: 'relative' }}>
+                {busy ? 'Working…' : 'Upload new data'}
+                <input type="file" accept={ACCEPT} onChange={handleFile} disabled={busy || Boolean(pending)} style={visuallyHidden} />
+              </label>
+            )}
+            {canUndo && (
+              <button type="button" className="btn-secondary" onClick={undo} disabled={busy || Boolean(pending)}
+                title={last ? `Undo: ${last.change}` : undefined}>
+                Undo last change
+              </button>
+            )}
+            {workbook && (
+              <button type="button" className="btn-secondary" onClick={clear} disabled={busy || Boolean(pending)}>
+                Clear
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {error && <Alert>{error}</Alert>}
-      {notice && <Notice>{notice}</Notice>}
 
-      {!workbook ? (
+      {last && (
+        <details style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 12 }}>
+          <summary style={{ cursor: 'pointer' }}>
+            Shared with everyone · last change {when(last.at)}: {last.change}{last.fileName ? ` (${last.fileName})` : ''}
+          </summary>
+          <ul style={{ margin: '6px 0 0 18px' }}>
+            {history.map((h, i) => (
+              <li key={i}>{when(h.at)}: {h.change}{h.fileName ? ` (${h.fileName})` : ''}{i === 0 ? ' · current' : ''}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {browserCopy && !pending && !loading && (
+        <Notice>
+          {workbook
+            ? `This browser also has its own copy of ${browserCopy.fileName}, from before sheets were shared. Check it against the shared sheet to add anything missing.`
+            : `${browserCopy.fileName} is saved only in this browser, from before sheets were shared. Move it to the shared dashboard so everyone sees it.`}
+          <div className="btn-row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn-secondary" onClick={() => startPreview(browserCopy, 'merge', true)} disabled={busy}>
+              {workbook ? 'Check and add it' : 'Check and move it'}
+            </button>
+            <button type="button" className="btn-secondary" onClick={discardBrowserCopy} disabled={busy}>Discard this copy</button>
+          </div>
+        </Notice>
+      )}
+
+      {pending && (
+        <UploadPreview
+          fileName={pending.upload.fileName}
+          preview={pending.preview}
+          mode={pending.mode}
+          busy={busy}
+          onModeChange={mode => { setPending(p => ({ ...p, mode })); startPreview(pending.upload, mode, pending.fromBrowser); }}
+          onApply={apply}
+          onCancel={() => setPending(null)}
+        />
+      )}
+
+      {loading ? (
+        <div className="card"><div className="card-sub">Loading the saved sheet…</div></div>
+      ) : !workbook ? (
         <div className="card">
           <label className="upload-area" style={{ position: 'relative' }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)"
@@ -836,9 +906,9 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            <div className="upload-title">{loading ? 'Reading file...' : `Upload ${title} data`}</div>
-            <div className="upload-sub">CSV or Excel (.xlsx, .xls) · Charts generate automatically</div>
-            <input type="file" accept={ACCEPT} onChange={handleFile} disabled={loading} style={visuallyHidden} />
+            <div className="upload-title">{busy ? 'Reading file...' : `Upload ${title} data`}</div>
+            <div className="upload-sub">CSV or Excel (.xlsx, .xls) · Charts generate automatically · Saved for everyone</div>
+            <input type="file" accept={ACCEPT} onChange={handleFile} disabled={busy || Boolean(pending)} style={visuallyHidden} />
           </label>
         </div>
       ) : (

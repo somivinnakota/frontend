@@ -3,7 +3,7 @@ import axios from 'axios';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
 import { downloadReportPdf } from '../utils/pdf';
-import { storageKeyFor, loadWorkbook } from '../components/SmartSheet';
+import { loadSharedWorkbook } from '../utils/sheets';
 import { analyseKpis } from './KPIDashboard';
 import { analyseConferences } from './Conferences';
 
@@ -79,10 +79,12 @@ function conferenceUpload(workbook) {
   };
 }
 
-function collectUploads() {
+// The uploaded sheets, from the shared storage on the server, so everyone's report uses the same data.
+async function collectUploads() {
   const uploads = {};
-  for (const [key, title] of Object.entries(UPLOADS)) {
-    const workbook = loadWorkbook(storageKeyFor(title));
+  const workbooks = await Promise.all(Object.values(UPLOADS).map(loadSharedWorkbook));
+  for (const [i, key] of Object.keys(UPLOADS).entries()) {
+    const workbook = workbooks[i];
     if (!workbook) continue;
     const understood = key === 'kpis' ? kpiUpload(workbook) : key === 'conferences' ? conferenceUpload(workbook) : null;
     uploads[key] = understood || {
@@ -383,7 +385,8 @@ export default function AIReports() {
   useEffect(() => {
     if (!periodKey) return;
     setReadiness(null);
-    axios.post(`${API_BASE}/api/executive/readiness`, { type, period: periodKey, uploads: collectUploads() })
+    collectUploads()
+      .then(uploads => axios.post(`${API_BASE}/api/executive/readiness`, { type, period: periodKey, uploads }))
       .then(r => setReadiness(r.data))
       .catch(e => setError(current => current || errorMessage(e, 'Could not check which data is available for this period.')));
   }, [type, periodKey]);
@@ -392,7 +395,7 @@ export default function AIReports() {
     setBusy(true);
     setError('');
     try {
-      const r = await axios.post(`${API_BASE}/api/executive/report`, { type, period: periodKey, uploads: collectUploads() });
+      const r = await axios.post(`${API_BASE}/api/executive/report`, { type, period: periodKey, uploads: await collectUploads() });
       setRecord(r.data);
       loadSaved();
     } catch (e) {
@@ -414,7 +417,7 @@ export default function AIReports() {
     setAsking(true);
     setAnswer(null);
     try {
-      const r = await axios.post(`${API_BASE}/api/executive/ask`, { type, period: periodKey, question: text, uploads: collectUploads() });
+      const r = await axios.post(`${API_BASE}/api/executive/ask`, { type, period: periodKey, question: text, uploads: await collectUploads() });
       setAnswer(r.data);
     } catch (e) {
       setAnswer({ answer: errorMessage(e, 'The question could not be answered.'), insufficient_data: true, evidence: [] });

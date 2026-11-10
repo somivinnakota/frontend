@@ -16,6 +16,21 @@ const fieldStyle = {
 };
 const linkStyle = { fontSize: 11, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 };
 
+// For searching: lower case, without accents, so "calderon" finds "Calderón".
+const plain = text => String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// A paper matches when every word typed appears somewhere in it, in any order
+// ("juan trujillo" and "trujillo juan" both work). Searches every author, not just the ones shown.
+const searchText = p => plain([p.title, p.authors, ...(p.authorNames || []), p.journal, p.doi, p.evidence].join(' '));
+const matches = (p, words) => words.every(w => searchText(p).includes(w));
+
+// The author a search found, when they aren't among the first three names shown.
+function matchedAuthor(p, words) {
+  if (!words.length) return null;
+  const name = (p.authorNames || []).find(n => words.every(w => plain(n).includes(w)));
+  return name && !plain(p.authors).includes(plain(name)) ? name : null;
+}
+
 const STATUS = {
   verified: { label: 'Verified INFANT', badge: 'badge-green' },
   other_output: { label: 'Other output (not counted)', badge: 'badge-blue' },
@@ -87,13 +102,13 @@ export default function Publications() {
     .map(([year, v]) => ({ year, 'Verified (counted)': v.verified, 'Other outputs': v.otherOutputs, 'Needs review': v.needsReview }));
   const years = [...new Set(papers.map(p => p.year).filter(Boolean))].sort((a, b) => b - a);
 
-  const term = search.trim().toLowerCase();
+  const words = plain(search).split(/\s+/).filter(Boolean);
   const filtered = papers.filter(p => {
     if (statusFilter !== 'all' && p.status !== statusFilter) return false;
     if (yearFilter !== 'all' && String(p.year) !== yearFilter) return false;
     if (accessFilter === 'openaccess' && !p.openAccess) return false;
     if (accessFilter === 'other' && p.openAccess) return false;
-    return !term || [p.title, p.authors, p.journal, p.doi, p.evidence].some(v => String(v || '').toLowerCase().includes(term));
+    return matches(p, words);
   });
 
   // If the latest update failed (e.g. Scopus refused the key), the last complete list is kept and
@@ -118,7 +133,7 @@ export default function Publications() {
           </button>
           <button className="btn-secondary" disabled={!data} onClick={() => downloadCsv('infant-publications.csv', [
             ['Year', 'First published', 'Title', 'Journal', 'Authors', 'Type', 'Status', 'Evidence (author address naming INFANT)', 'Evidence source', 'DOI', 'PubMed ID', 'Open access'],
-            ...filtered.map(p => [p.year, p.date, p.title, p.journal, p.authors, p.type, STATUS[p.status]?.label || p.status,
+            ...filtered.map(p => [p.year, p.date, p.title, p.journal, p.authorNames?.length ? p.authorNames.join('; ') : p.authors, p.type, STATUS[p.status]?.label || p.status,
               p.evidence, p.evidenceSource, p.doi, p.pmid, p.openAccess ? 'Yes' : 'No']),
           ])}>
             Download list (CSV)
@@ -251,6 +266,7 @@ export default function Publications() {
                       <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', lineHeight: 1.5, marginBottom: 4 }}>{paper.title}</div>
                       <div style={{ fontSize: 11, color: 'var(--muted-foreground)', fontStyle: 'italic' }}>
                         {paper.journal && <span>{paper.journal}{paper.authors ? ' · ' : ''}</span>}{paper.authors}
+                        {matchedAuthor(paper, words) && <span style={{ fontStyle: 'normal' }}> · includes {matchedAuthor(paper, words)}</span>}
                       </div>
                       {paper.evidence && (
                         <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 4 }}>

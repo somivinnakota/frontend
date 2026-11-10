@@ -26,7 +26,7 @@ function CompareCard({ label, current, previous, glossaryId }) {
             {parseFloat(p) >= 0 ? '▲' : '▼'} {Math.abs(p)}% vs same quarter last year
           </div>
         )
-        : <div className="kpi-delta neutral">No data for last year</div>}
+        : <div className="kpi-delta neutral">{previous === null || previous === undefined ? 'No campaigns last year' : 'No campaigns this quarter'}</div>}
       {previous > 0 && (
         <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
           Last year: {previous.toLocaleString()}
@@ -248,12 +248,18 @@ export default function QuarterlyReport() {
               <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8, fontWeight: 500 }}>
                 EMAIL (MAILCHIMP) — {result.quarter} {result.year} vs {result.quarter} {result.prevYear}
               </div>
-              <div className="kpi-row" style={{ marginBottom: 18 }}>
-                <CompareCard label="Campaigns sent" current={mc.current.campaigns} previous={mc.previous.campaigns} />
-                <CompareCard label="Emails delivered" current={mc.current.delivered} previous={mc.previous.delivered} />
-                <RateCard label="Engagement rate" current={mc.current.engagementRate} previous={mc.previous.engagementRate} note="Subscribers who clicked ÷ emails delivered" glossaryId="click_through_rate" />
-                <RateCard label="Open rate" current={mc.current.openRate} previous={mc.previous.openRate} note="Can be inflated by Apple Mail privacy" glossaryId="open_rate" />
-              </div>
+              {mc.current.campaigns || mc.previous.campaigns ? (
+                <div className="kpi-row" style={{ marginBottom: 18 }}>
+                  <CompareCard label="Campaigns sent" current={mc.current.campaigns} previous={mc.previous.campaigns} />
+                  <CompareCard label="Emails delivered" current={mc.current.delivered} previous={mc.previous.delivered} />
+                  <RateCard label="Engagement rate" current={mc.current.engagementRate} previous={mc.previous.engagementRate} note="Subscribers who clicked ÷ emails delivered" glossaryId="click_through_rate" />
+                  <RateCard label="Open rate" current={mc.current.openRate} previous={mc.previous.openRate} note="Can be inflated by Apple Mail privacy" glossaryId="open_rate" />
+                </div>
+              ) : (
+                <div className="info-note">
+                  No email campaigns were sent in {result.quarter} {result.year} or {result.quarter} {result.prevYear}.
+                </div>
+              )}
             </>
           )}
 
