@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
+import LoadWarning, { useLoadFailures } from '../components/LoadWarning';
 import SocialUpload from '../components/SocialUpload';
 import MetricInfo from '../components/MetricInfo';
 import MailchimpPanel from '../components/MailchimpPanel';
@@ -178,6 +179,7 @@ export default function SocialMedia() {
   const [social, setSocial] = useState(null);
   const [metaStatus, setMetaStatus] = useState(null);
   const [error, setError] = useState('');
+  const [failed, failedToLoad] = useLoadFailures();
 
   const loadSocial = useCallback(() => {
     axios.get(`${API_BASE}/api/social-data`)
@@ -185,12 +187,12 @@ export default function SocialMedia() {
       .catch(e => setError(errorMessage(e, 'Could not load social media data. Make sure the backend is running.')));
   }, []);
 
-    useEffect(() => {
-    axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(() => {});
-    axios.get(`${API_BASE}/api/instagram`).then(r => setIgStats(r.data)).catch(() => {});
-    axios.get(`${API_BASE}/api/meta-status`).then(r => setMetaStatus(r.data)).catch(() => {});
+  useEffect(() => {
+    axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(failedToLoad('live Facebook figures'));
+    axios.get(`${API_BASE}/api/instagram`).then(r => setIgStats(r.data)).catch(failedToLoad('live Instagram figures'));
+    axios.get(`${API_BASE}/api/meta-status`).then(r => setMetaStatus(r.data)).catch(failedToLoad('Meta connection status'));
     loadSocial();
-  }, [loadSocial]);
+  }, [loadSocial, failedToLoad]);
 
   // Split every series into this year and last year, both with chart labels.
   const prepared = useMemo(() => {
@@ -290,6 +292,7 @@ export default function SocialMedia() {
       {error && (
         <div style={{ color: 'var(--destructive)', fontSize: 13, padding: '20px 0' }}>{error}</div>
       )}
+      {!error && <LoadWarning failed={failed} />}
       {!error && !social && (
         <div style={{ color: 'var(--muted-foreground)', fontSize: 13, padding: '20px 0' }}>Loading social media data...</div>
       )}

@@ -139,7 +139,8 @@ export default function SocialUpload({ onUploaded, startOpen = false }) {
   const [error, setError] = useState('');
 
   const loadStatus = useCallback(() => {
-    axios.get(`${API_BASE}/api/social-status`).then(r => setStatus(r.data)).catch(() => {});
+    axios.get(`${API_BASE}/api/social-status`).then(r => setStatus(r.data))
+      .catch(e => setError(errorMessage(e, 'Could not load the list of uploaded data. Make sure the backend is running.')));
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);

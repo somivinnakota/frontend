@@ -364,7 +364,8 @@ export default function AIReports() {
   const [answer, setAnswer] = useState(null);
   const [asking, setAsking] = useState(false);
 
-  const loadSaved = () => axios.get(`${API_BASE}/api/executive/reports`).then(r => setSaved(r.data.reports)).catch(() => {});
+  const loadSaved = () => axios.get(`${API_BASE}/api/executive/reports`).then(r => setSaved(r.data.reports))
+    .catch(e => setError(current => current || errorMessage(e, 'Could not load the saved reports. Make sure the backend is running.')));
 
   useEffect(() => {
     axios.get(`${API_BASE}/api/executive/periods`)
@@ -384,7 +385,7 @@ export default function AIReports() {
     setReadiness(null);
     axios.post(`${API_BASE}/api/executive/readiness`, { type, period: periodKey, uploads: collectUploads() })
       .then(r => setReadiness(r.data))
-      .catch(() => {});
+      .catch(e => setError(current => current || errorMessage(e, 'Could not check which data is available for this period.')));
   }, [type, periodKey]);
 
   const generate = async () => {

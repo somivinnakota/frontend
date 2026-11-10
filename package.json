@@ -13,7 +13,6 @@
     "react-router-dom": "^7.18.3",
     "react-scripts": "5.0.1",
     "recharts": "^3.10.1",
-    "web-vitals": "^2.1.4",
     "xlsx": "^0.18.5"
   },
   "scripts": {
@@ -39,5 +38,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    }
   }
 }

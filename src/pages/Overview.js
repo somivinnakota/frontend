@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { API_BASE } from '../config';
 import { errorMessage } from '../utils/errors';
+import LoadWarning, { useLoadFailures } from '../components/LoadWarning';
 import { withLabels, forYear, aggregateByMonth, sumValues, compactTick } from '../utils/social';
 
 const ELSEVIER_KEY = '4c22960291ad9b6a7a871ec1ab076640';
@@ -189,12 +190,13 @@ export default function Overview() {
   const [fbStats, setFbStats] = useState(null);
   const [ebData, setEbData] = useState(null);
   const [social, setSocial] = useState(null);
+  const [failed, failedToLoad] = useLoadFailures();
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/publications/count`).then(r => { setPubCount(r.data.total); setPubByYear(r.data.byYear || null); }).catch(() => {});
-    axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(() => {});
-    axios.get(`${API_BASE}/api/eventbrite`).then(r => setEbData(r.data)).catch(() => {});
-    axios.get(`${API_BASE}/api/social-data`).then(r => setSocial(r.data)).catch(() => {});
+    axios.get(`${API_BASE}/api/publications/count`).then(r => { setPubCount(r.data.total); setPubByYear(r.data.byYear || null); }).catch(failedToLoad('Publications'));
+    axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(failedToLoad('Facebook'));
+    axios.get(`${API_BASE}/api/eventbrite`).then(r => setEbData(r.data)).catch(failedToLoad('Eventbrite'));
+    axios.get(`${API_BASE}/api/social-data`).then(r => setSocial(r.data)).catch(failedToLoad('Social media'));
 
     // One request for impact data, then the Elsevier metrics that depend on it.
     axios.get(`${API_BASE}/api/impact-data`)
@@ -210,7 +212,7 @@ export default function Overview() {
           console.warn('Elsevier metrics unavailable:', error.message);
         }
       });
-  }, []);
+  }, [failedToLoad]);
 
   const generateNarrative = async () => {
     setLoadingNarrative(true);
@@ -278,6 +280,7 @@ export default function Overview() {
 
   return (
     <div className="page">
+      <LoadWarning failed={failed} />
 
       {/* Header */}
       <div className="page-header">

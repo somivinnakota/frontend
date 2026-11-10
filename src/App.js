@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import Overview from './pages/Overview';
 import SocialMedia from './pages/SocialMedia';
@@ -22,35 +22,66 @@ const Icons = {
   reports:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
   pubs:      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 6.25278V19.2528M12 6.25278C10.8321 5.47686 9.24649 5 7.5 5C5.75351 5 4.16789 5.47686 3 6.25278V19.2528C4.16789 18.4769 5.75351 18 7.5 18C9.24649 18 10.8321 18.4769 12 19.2528M12 6.25278C13.1679 5.47686 14.7535 5 16.5 5C18.2465 5 19.8321 5.47686 21 6.25278V19.2528C19.8321 18.4769 18.2465 18 16.5 18C14.7535 18 13.1679 18.4769 12 19.2528"/></svg>,
   hint:      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{width:14,height:14,flexShrink:0,color:'var(--sidebar-primary)'}}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>,
+  menu:      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>,
 };
 
-const PAGE_NAMES = {
-  '/': 'Overview',
-  '/social': 'Social media',
-  '/kpi': 'KPI tracker',
-  '/press': 'Press and media',
-  '/events': 'Calendar of events',
-  '/conferences': 'Conference list',
-  '/publications': 'Publications',
-  '/quarterly': 'Quarterly reports',
-  '/reports': 'AI reports',
-};
+// The sidebar links, in order. "section" starts a new group with that heading.
+const NAV = [
+  { section: 'Workspace' },
+  { to: '/', label: 'Overview', icon: Icons.overview, end: true },
+  { section: 'Data' },
+  { to: '/social', label: 'Social media', icon: Icons.social },
+  { to: '/kpi', label: 'KPI tracker', icon: Icons.kpi },
+  { to: '/press', label: 'Press and media', icon: Icons.press },
+  { to: '/events', label: 'Calendar of events', icon: Icons.events },
+  { to: '/conferences', label: 'Conference list', icon: Icons.conf },
+  { to: '/publications', label: 'Publications', icon: Icons.pubs },
+  { section: 'Reports', divider: true },
+  { to: '/quarterly', label: 'Quarterly reports', icon: Icons.quarterly },
+  { to: '/reports', label: 'AI reports', icon: Icons.reports },
+];
 
-function TopBar() {
+const PAGE_NAMES = Object.fromEntries(NAV.filter(item => item.to).map(item => [item.to, item.label]));
+
+// Remembers whether the sidebar was left open or closed.
+const SIDEBAR_KEY = 'sidebar-collapsed';
+function savedCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; }
+}
+
+function TopBar({ collapsed, onToggle }) {
   const location = useLocation();
   const name = PAGE_NAMES[location.pathname] || 'Overview';
   return (
     <header className="topbar">
-      <div className="topbar-label">{name}</div>
+      <div className="topbar-left">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={onToggle}
+          aria-label={collapsed ? 'Open the sidebar' : 'Close the sidebar'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Open the sidebar' : 'Close the sidebar'}
+        >
+          {Icons.menu}
+        </button>
+        <div className="topbar-label">{name}</div>
+      </div>
       <div className="topbar-avatar">IA</div>
     </header>
   );
 }
 
 function AppInner() {
+  const [collapsed, setCollapsed] = useState(savedCollapsed);
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [collapsed]);
+
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
         <div className="logo">
           <div className="logo-icon">i</div>
           <div className="logo-text">
@@ -59,39 +90,22 @@ function AppInner() {
           </div>
         </div>
         <nav className="nav">
-          <div className="nav-section">Workspace</div>
-          <NavLink to="/" end className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.overview} Overview
-          </NavLink>
-
-          <div className="nav-section">Data</div>
-          <NavLink to="/social" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.social} Social media
-          </NavLink>
-          <NavLink to="/kpi" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.kpi} KPI tracker
-          </NavLink>
-          <NavLink to="/press" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.press} Press and media
-          </NavLink>
-          <NavLink to="/events" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.events} Calendar of events
-          </NavLink>
-          <NavLink to="/conferences" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.conf} Conference list
-          </NavLink>
-          <NavLink to="/publications" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.pubs} Publications
-          </NavLink>
-
-          <div className="nav-divider" />
-          <div className="nav-section">Reports</div>
-          <NavLink to="/quarterly" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.quarterly} Quarterly reports
-          </NavLink>
-          <NavLink to="/reports" className={({isActive}) => isActive ? 'nav-item active' : 'nav-item'}>
-            {Icons.reports} AI reports
-          </NavLink>
+          {NAV.map(item => (item.section ? (
+            <React.Fragment key={item.section}>
+              {item.divider && <div className="nav-divider" />}
+              <div className="nav-section">{item.section}</div>
+            </React.Fragment>
+          ) : (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              title={collapsed ? item.label : undefined}
+              className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
+            >
+              {item.icon} <span className="nav-label">{item.label}</span>
+            </NavLink>
+          )))}
 
           <div className="nav-divider" />
           <div className="nav-hint">
@@ -106,7 +120,7 @@ function AppInner() {
       </aside>
 
       <div className="main">
-        <TopBar />
+        <TopBar collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} />
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/social" element={<SocialMedia />} />
