@@ -68,7 +68,7 @@ function DropZone({ platform, busy, onFiles }) {
       onDrop={e => {
         e.preventDefault();
         setOver(false);
-        if (e.dataTransfer.files?.length) onFiles(platform.id, e.dataTransfer.files);
+        if (e.dataTransfer.files?.length) onFiles(platform.id, Array.from(e.dataTransfer.files));
       }}
       style={{
         position: 'relative', flex: 1, minWidth: 200, cursor: busy ? 'wait' : 'pointer',
@@ -79,9 +79,11 @@ function DropZone({ platform, busy, onFiles }) {
       <div className="upload-sub">Drop files here or click to choose · any names · several at once</div>
       <input type="file" accept={ACCEPT} multiple disabled={busy} style={visuallyHidden}
         onChange={e => {
-          const files = e.target.files;
-          if (files?.length) onFiles(platform.id, files);
+          // Copy the list first: clearing the box (so the same files can be chosen again)
+          // also empties the browser's own list, which would leave only the first file.
+          const files = Array.from(e.target.files || []);
           e.target.value = '';
+          if (files.length) onFiles(platform.id, files);
         }} />
     </label>
   );
