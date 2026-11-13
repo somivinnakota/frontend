@@ -81,7 +81,10 @@ const formatDate = iso => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString(
 
 // One paper in a list. It can be dragged between the two lists, and has a button that does the same.
 function PaperRow({ paper, words, isOpen, onToggle, onAdd, onRemove, saving, last, names }) {
-  const status = STATUS[paper.status] || { label: paper.status, badge: 'badge-gray' };
+  // A paper added to the collection shows as counted, not as "Needs review" or "Other output".
+  const status = paper.collection === 'added'
+    ? { label: 'Counted', badge: 'badge-green' }
+    : STATUS[paper.status] || { label: paper.status, badge: 'badge-gray' };
   const researchers = (paper.investigators || []).map(id => names[id]).filter(Boolean);
   const stop = fn => e => { e.stopPropagation(); fn(paper); };
   return (
@@ -129,7 +132,6 @@ function PaperRow({ paper, words, isOpen, onToggle, onAdd, onRemove, saving, las
         <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           {paper.year && <span className="badge badge-blue">{paper.year}</span>}
           <span className={`badge ${status.badge}`}>{status.label}</span>
-          {paper.collection === 'added' && <span className="badge badge-green">Added by hand</span>}
           {paper.collection === 'removed' && <span className="badge badge-gray">Removed by hand</span>}
           {paper.status === 'other_output' && <span className="badge badge-gray">{paper.type}</span>}
           {paper.openAccess && <span className="badge badge-green">Open access</span>}
@@ -195,6 +197,9 @@ export default function Publications() {
         ...current,
         papers: current.papers.map(p => (p.key === paper.key ? r.data.paper : p)),
         byYear: r.data.byYear, totalCounted: r.data.totalCounted, manuallyAdded: r.data.manuallyAdded, manuallyRemoved: r.data.manuallyRemoved,
+        // The cards and chart move with the paper: out of "needs review" or "other outputs", into the count.
+        needsReview: r.data.needsReview ?? current.needsReview,
+        otherOutputs: r.data.otherOutputs ?? current.otherOutputs,
       })))
       .catch(e => setSaveError(errorMessage(e, 'The change could not be saved.')))
       .finally(() => setSaving(null));
@@ -214,7 +219,7 @@ export default function Publications() {
   });
 
   const chartData = Object.entries(byYear)
-    .filter(([y, v]) => Number(y) >= (data?.firstYear || 2013) && (v.verified || v.otherOutputs || v.needsReview))
+    .filter(([y, v]) => Number(y) >= (data?.firstYear || 2013) && (v.counted || v.verified || v.otherOutputs || v.needsReview))
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([year, v]) => ({ year, 'Counted': v.counted ?? v.verified, 'Other outputs': v.otherOutputs, 'Needs review': v.needsReview }));
   const years = [...new Set(papers.map(p => p.year).filter(Boolean))].sort((a, b) => b - a);
