@@ -187,13 +187,16 @@ export default function Overview() {
   const [loadingNarrative, setLoadingNarrative] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [infantMetrics, setInfantMetrics] = useState(null);
+  const [roster, setRoster] = useState(null); // the listed researchers and their papers in the publication list
+  const [openResearcher, setOpenResearcher] = useState(null);
   const [fbStats, setFbStats] = useState(null);
   const [ebData, setEbData] = useState(null);
   const [social, setSocial] = useState(null);
   const [failed, failedToLoad] = useLoadFailures();
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/publications/count`).then(r => { setPubCount(r.data.total); setPubByYear(r.data.byYear || null); }).catch(failedToLoad('Publications'));
+    axios.get(`${API_BASE}/api/publications/count`).then(r => { setPubCount(typeof r.data?.total === 'number' ? r.data.total : null); setPubByYear(r.data?.byYear || null); }).catch(failedToLoad('Publications'));
+    axios.get(`${API_BASE}/api/publications/investigators`).then(r => setRoster(Array.isArray(r.data?.investigators) ? r.data.investigators : null)).catch(failedToLoad('Researcher publications'));
     axios.get(`${API_BASE}/api/facebook`).then(r => setFbStats(r.data)).catch(failedToLoad('Facebook'));
     axios.get(`${API_BASE}/api/eventbrite`).then(r => setEbData(r.data)).catch(failedToLoad('Eventbrite'));
     axios.get(`${API_BASE}/api/social-data`).then(r => setSocial(r.data)).catch(failedToLoad('Social media'));
@@ -356,7 +359,7 @@ export default function Overview() {
           <div style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '-6px 0 12px' }}>
             Entered from SciVal. Covers everything INFANT's researchers published, including work without an INFANT
             address and letters or editorials, so it is higher than the verified INFANT publication count
-            {pubCount !== null ? ` (${pubCount.toLocaleString()})` : ''}.
+            {typeof pubCount === 'number' ? ` (${pubCount.toLocaleString()})` : ''}.
           </div>
 
           <div className="kpi-row" style={{ marginBottom: 16 }}>
@@ -529,8 +532,69 @@ export default function Overview() {
         </>
       )}
 
-      {/* INFANT researcher list */}
-      {researcherCount > 0 && (
+      {/* The listed researchers and their publications (same list as the Publications page) */}
+      {roster?.length > 0 && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card-title">INFANT researchers and their publications</div>
+          <div className="card-sub">
+            {roster.length} researchers · papers found on Scopus or PubMed since 2013 · a paper counts when it names INFANT, or the researcher's own address names UCC or CUMH · click a name for their latest papers
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 6 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--muted-foreground)', fontSize: 11 }}>
+                <th style={{ padding: '6px 8px', fontWeight: 500 }}>Researcher</th>
+                <th style={{ padding: '6px 8px', fontWeight: 500, textAlign: 'right' }}>Papers found</th>
+                <th style={{ padding: '6px 8px', fontWeight: 500, textAlign: 'right' }}>Counted</th>
+                <th style={{ padding: '6px 8px', fontWeight: 500, textAlign: 'right' }}>Not counted</th>
+                <th style={{ padding: '6px 8px', fontWeight: 500 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {roster.map(r => (
+                <React.Fragment key={r.id}>
+                  <tr onClick={() => setOpenResearcher(openResearcher === r.id ? null : r.id)} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <td style={{ padding: '8px', fontWeight: 500, color: 'var(--foreground)' }}>
+                      {r.name || `Scopus ${(r.scopusIds || [])[0] || ''}`}
+                      {!(r.scopusIds || []).length && <span style={{ fontWeight: 400, color: 'var(--muted-foreground)' }}> · no Scopus ID yet, found by name in PubMed</span>}
+                    </td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{(r.papers || 0).toLocaleString()}</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{(r.counted || 0).toLocaleString()}</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{((r.papers || 0) - (r.counted || 0)).toLocaleString()}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {(r.scopusIds || []).map((id, i) => (
+                        <a key={id} href={`https://www.scopus.com/authid/detail.url?authorId=${id}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                          style={{ fontSize: 10, color: 'var(--accent)', textDecoration: 'none', marginLeft: 8 }}>
+                          Scopus{(r.scopusIds || []).length > 1 ? ` ${i + 1}` : ''} ↗
+                        </a>
+                      ))}
+                    </td>
+                  </tr>
+                  {openResearcher === r.id && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '4px 8px 12px 20px', background: 'var(--secondary)' }}>
+                        {!(r.latest || []).length && <div style={{ color: 'var(--muted-foreground)', padding: '6px 0' }}>No papers found yet. They appear after the next publication list update.</div>}
+                        {(r.latest || []).map(p => (
+                          <div key={p.id} style={{ padding: '6px 0', lineHeight: 1.45 }}>
+                            <a href={p.doi ? `https://doi.org/${p.doi}` : `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}`} target="_blank" rel="noreferrer" style={{ color: 'var(--foreground)', textDecoration: 'none' }}>{p.title}</a>
+                            <span style={{ color: 'var(--muted-foreground)' }}> · {p.journal} · {p.date?.slice(0, 4)} </span>
+                            <span className={`badge ${p.counted ? 'badge-green' : 'badge-orange'}`}>{p.counted ? 'Counted' : 'Not counted'}</span>
+                          </div>
+                        ))}
+                        <a href={`/publications?investigator=${encodeURIComponent(r.id)}`} style={{ fontSize: 11, color: 'var(--accent)' }}>
+                          See all {(r.papers || 0).toLocaleString()} and add papers to the collection →
+                        </a>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* INFANT researcher list from Elsevier, shown only until the roster above has loaded */}
+      {!roster?.length && researcherCount > 0 && (
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="card-title">INFANT researchers on Scopus</div>
           <div className="card-sub">{researcherCount} researchers · publication output {firstYear}–{lastYear} · Live from Elsevier</div>
@@ -601,8 +665,8 @@ export default function Overview() {
                   <tr><th>Source</th><th>Metric</th><th>Status</th><th>Value</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>Scopus + PubMed</td><td>Verified INFANT publications</td><td><span className="badge badge-green">Live</span></td><td>{pubCount !== null ? pubCount.toLocaleString() : '—'}</td></tr>
-                  <tr><td>Eventbrite</td><td>Total events</td><td><span className="badge badge-green">Live</span></td><td>{ebData ? ebData.total.toLocaleString() : '—'}</td></tr>
+                  <tr><td>Scopus + PubMed</td><td>Verified INFANT publications</td><td><span className="badge badge-green">Live</span></td><td>{typeof pubCount === 'number' ? pubCount.toLocaleString() : '—'}</td></tr>
+                  <tr><td>Eventbrite</td><td>Total events</td><td><span className="badge badge-green">Live</span></td><td>{typeof ebData?.total === 'number' ? ebData.total.toLocaleString() : '—'}</td></tr>
                   <tr><td>Facebook</td><td>Followers</td><td><span className="badge badge-green">Live</span></td><td>{fbStats?.followers_count != null ? fbStats.followers_count.toLocaleString() : '—'}</td></tr>
                   <tr>
                     <td>Elsevier / Scopus</td><td>Researcher metrics</td>
