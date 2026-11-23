@@ -1,13 +1,47 @@
 import React from 'react';
 
+// The file's tabs, to tick the ones this page should use. Shown only for files with several tabs.
+function TabPicker({ tabs, onChange, busy }) {
+  if (!tabs || tabs.length < 2) return null;
+  const picked = tabs.filter(t => t.picked).map(t => t.name);
+  const toggle = name => onChange(picked.includes(name) ? picked.filter(n => n !== name) : [...picked, name]);
+  return (
+    <div style={{ margin: '8px 0 12px' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Tabs to use on this page</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {tabs.map(t => {
+          const only = t.picked && picked.length === 1; // at least one tab has to stay
+          return (
+            <label key={t.name} className={`tab-btn${t.picked ? ' active' : ''}`}
+              style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: busy || only ? 'default' : 'pointer' }}
+              title={only ? 'At least one tab has to be kept' : undefined}>
+              <input type="checkbox" checked={t.picked} disabled={busy || only} onChange={() => toggle(t.name)} />
+              {t.name}
+              <span style={{ fontSize: 10, opacity: 0.7 }}>{t.rows ? `${t.rows} rows` : 'empty'}</span>
+            </label>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>
+        Unticked tabs aren't saved or charted here, and are left out of later uploads of this file too. Instructions, chart and empty tabs start unticked.
+      </div>
+    </div>
+  );
+}
+
 // Shows what an upload would change before anything is saved, with Apply and Cancel.
 // `preview` is the server's answer (backend sheets.js); nothing is saved until Apply.
-export default function UploadPreview({ fileName, preview, mode, onModeChange, onApply, onCancel, busy }) {
+// `tabs`: the file's tabs, with which are picked; `onTabsChange` gets the new list of picked names.
+export default function UploadPreview({ fileName, preview, mode, onModeChange, onApply, onCancel, busy, tabs, onTabsChange }) {
   const { summary, hasSaved, previousRows } = preview;
   const replacing = mode === 'replace';
   const newColumns = summary.sheets.flatMap(s => s.newColumns || []);
   const newSheets = summary.sheets.filter(s => s.newSheet).map(s => s.name);
-  const nothingNew = hasSaved && !replacing && !summary.added && !summary.corrected && !newColumns.length;
+  const removedSheets = summary.removedSheets || [];
+  const newlyExcluded = summary.newlyExcluded || [];
+  // Removing a tab, leaving one out for the first time, or bringing back an empty tab are changes too.
+  const nothingNew = hasSaved && !replacing && !summary.added && !summary.corrected && !newColumns.length
+    && !removedSheets.length && !newlyExcluded.length && !newSheets.length;
   const corrections = summary.sheets.flatMap(s => (s.corrected || []).map(c => ({ ...c, sheet: s.name })));
   const correctedCount = summary.sheets.reduce((n, s) => n + (s.correctedCount ?? (s.corrected || []).length), 0);
   const added = summary.sheets.flatMap(s => s.added && Array.isArray(s.added) ? s.added : []);
@@ -16,6 +50,7 @@ export default function UploadPreview({ fileName, preview, mode, onModeChange, o
   return (
     <div className="card" style={{ marginBottom: 16, border: '1px solid var(--accent)' }}>
       <div className="card-title">Check before saving: {fileName}</div>
+      <TabPicker tabs={tabs} onChange={onTabsChange} busy={busy} />
 
       {!hasSaved || replacing ? (
         <div className="card-sub">
@@ -37,6 +72,8 @@ export default function UploadPreview({ fileName, preview, mode, onModeChange, o
             {' '}Blank cells in this file keep the saved value.
             {newColumns.length > 0 && ` New columns: ${newColumns.join(', ')}.`}
             {newSheets.length > 0 && ` New sheets: ${newSheets.join(', ')}.`}
+            {removedSheets.length > 0 && ` Removed from this page: ${removedSheets.join(', ')}.`}
+            {newlyExcluded.length > 0 && ` Left out from now on: ${newlyExcluded.join(', ')}.`}
           </div>
 
           {corrections.length > 0 && (

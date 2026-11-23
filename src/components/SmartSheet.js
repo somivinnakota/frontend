@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import UploadPreview from './UploadPreview';
-import { getSheet, previewUpload, applyUpload, undoLast, clearSheet } from '../utils/sheets';
+import { getSheet, previewUpload, applyUpload, undoLast, clearSheet, removeTab } from '../utils/sheets';
 import { errorMessage } from '../utils/errors';
 
 /* =========================================================
@@ -214,7 +214,7 @@ function makeUniqueHeaders(rawHeaders) {
 
 // Returns data rows (used for charts) plus a layout that keeps the sheet's original
 // order, including label rows like "Q1" or notes, for the table.
-function parseSheet(XLSX, name, worksheet) {
+export function parseSheet(XLSX, name, worksheet) {
   const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null, raw: true, blankrows: false });
   if (matrix.length === 0) return { name, headers: [], rows: [], layout: [] };
 
@@ -298,6 +298,40 @@ function decodeText(buffer) {
   } catch {
     return new TextDecoder('windows-1252').decode(buffer);
   }
+}
+
+/* =========================================================
+   Choosing which tabs of a file to keep
+   ========================================================= */
+
+// Tabs that are usually not data: instructions, chart tabs, lookup lists. They start unticked,
+// as do empty tabs (Excel chart sheets come through empty). Anyone can tick them back.
+const NOT_DATA_TAB = /instruction|read ?me|guidance|how to|chart|graph|lookup|drop.?down|template/i;
+const tabName = name => String(name).trim().toLowerCase();
+
+// Which tabs of an upload start ticked. Tabs left out of this page before stay out; tabs already
+// saved stay in; any other tab is in if it has data and doesn't look like instructions or charts.
+export function defaultTabs(upload, saved) {
+  const excluded = new Set((saved?.excluded || []).map(tabName));
+  const kept = new Set((saved?.sheets || []).map(s => tabName(s.name)));
+  const picked = upload.sheets.filter(s => {
+    const name = tabName(s.name);
+    if (excluded.has(name)) return false;
+    if (kept.has(name)) return true;
+    return s.rows.length > 0 && !NOT_DATA_TAB.test(s.name);
+  });
+  const fallback = upload.sheets.filter(s => s.rows.length > 0);
+  return (picked.length ? picked : fallback.length ? fallback : upload.sheets).map(s => s.name);
+}
+
+// The upload as sent to the server: only the ticked tabs, plus the names of the unticked ones,
+// so the server removes them if they were saved before and remembers to leave them out.
+export function withTabs(upload, tabs) {
+  return {
+    ...upload,
+    sheets: upload.sheets.filter(s => tabs.includes(s.name)),
+    excluded: upload.sheets.filter(s => !tabs.includes(s.name)).map(s => s.name),
+  };
 }
 
 /* =========================================================
@@ -744,8 +778,9 @@ function DataTable({ sheet }) {
    Page
    ========================================================= */
 
-// `summary` (optional): a component that analyses the whole workbook for a specific page, e.g. the
-// conference list. It gets the generic charts as `fallback` to show when it doesn't recognise the file.
+// `summary` (optional): a component that analyses the file for a specific page, e.g. the conference
+// list. It gets the whole `workbook` and the subsheet picked in the tabs (`sheet`), so a page can read
+// either; and the generic charts for that subsheet as `fallback`, for when it doesn't recognise it.
 export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, summary: Summary, countLabel }) {
   const storageKey = useMemo(() => storageKeyFor(title), [title]);
 
@@ -753,8 +788,9 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
   const [history, setHistory] = useState([]);
   const [canUndo, setCanUndo] = useState(false);
   const [browserCopy, setBrowserCopy] = useState(() => loadWorkbook(storageKey));
-  const [pending, setPending] = useState(null); // an upload waiting for Apply: { upload, mode, preview, fromBrowser }
+  const [pending, setPending] = useState(null); // an upload waiting for Apply: { upload, mode, preview, fromBrowser, tabs }
   const [activeSheet, setActiveSheet] = useState(0);
+  const [confirmRemove, setConfirmRemove] = useState(false); // "Remove this tab?" is showing
   const [activeTab, setActiveTab] = useState('charts');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -766,6 +802,7 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
     setHistory(data.history);
     setCanUndo(data.canUndo);
     setActiveSheet(0);
+    setConfirmRemove(false);
   }, []);
 
   useEffect(() => {
@@ -783,9 +820,10 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
   };
 
   // Step 1 of every upload: ask the server what it would change. Nothing is saved yet.
-  const startPreview = (upload, mode = 'merge', fromBrowser = false) => run(async () => {
-    const preview = await previewUpload(title, upload, mode);
-    setPending({ upload, mode, preview, fromBrowser });
+  // `tabs`: the names of the file's tabs to keep (the rest are left out of this page).
+  const startPreview = (upload, mode = 'merge', fromBrowser = false, tabs = defaultTabs(upload, workbook)) => run(async () => {
+    const preview = await previewUpload(title, withTabs(upload, tabs), mode);
+    setPending({ upload, mode, preview, fromBrowser, tabs });
   }, 'Could not check this file against the saved sheet. Make sure the backend is running.');
 
   const handleFile = async (e) => {
@@ -807,7 +845,7 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
 
   // Step 2: Apply saves the upload exactly as previewed (merged, or replacing everything).
   const apply = () => run(async () => {
-    const data = await applyUpload(title, pending.upload, pending.mode === 'replace' ? 'replace' : pending.fromBrowser ? 'move' : 'merge');
+    const data = await applyUpload(title, withTabs(pending.upload, pending.tabs), pending.mode === 'replace' ? 'replace' : pending.fromBrowser ? 'move' : 'merge');
     if (pending.fromBrowser) { removeWorkbook(storageKey); setBrowserCopy(null); }
     setPending(null);
     setActiveTab('charts');
@@ -816,12 +854,16 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
 
   const undo = () => run(async () => show(await undoLast(title)), 'Could not undo the last change.');
   const clear = () => run(async () => show(await clearSheet(title)), 'Could not clear the sheet.');
+  const removeActiveTab = () => run(async () => show(await removeTab(title, sheet.name)), 'Could not remove the tab.');
   const discardBrowserCopy = () => { removeWorkbook(storageKey); setBrowserCopy(null); };
 
   const last = history[0];
   const when = at => (at ? new Date(at).toLocaleString('en-IE', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
   const sheet = workbook ? (workbook.sheets[activeSheet] ?? workbook.sheets[0]) : null;
-  const viewKey = workbook ? `${workbook.fileName}-${activeSheet}` : 'empty';
+  // Charts, KPI picks and table search reset whenever what's shown changes: another tab, or a new saved
+  // version (upload, removed tab, undo). Position alone isn't enough: removing the first tab moves the
+  // next one into its place.
+  const viewKey = workbook ? `${last?.at || workbook.fileName}-${activeSheet}-${sheet?.name}` : 'empty';
 
   return (
     <div className="page">
@@ -889,7 +931,9 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
           preview={pending.preview}
           mode={pending.mode}
           busy={busy}
-          onModeChange={mode => { setPending(p => ({ ...p, mode })); startPreview(pending.upload, mode, pending.fromBrowser); }}
+          onModeChange={mode => { setPending(p => ({ ...p, mode })); startPreview(pending.upload, mode, pending.fromBrowser, pending.tabs); }}
+          tabs={pending.upload.sheets.map(s => ({ name: s.name, rows: s.rows.length, picked: pending.tabs.includes(s.name) }))}
+          onTabsChange={tabs => startPreview(pending.upload, pending.mode, pending.fromBrowser, tabs)}
           onApply={apply}
           onCancel={() => setPending(null)}
         />
@@ -914,14 +958,26 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
       ) : (
         <>
           {workbook.sheets.length > 1 && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
               {workbook.sheets.map((s, i) => (
-                <button key={`${s.name}-${i}`} type="button" onClick={() => setActiveSheet(i)}
+                <button key={`${s.name}-${i}`} type="button" onClick={() => { setActiveSheet(i); setConfirmRemove(false); }}
                   aria-pressed={activeSheet === i}
                   className={`tab-btn${activeSheet === i ? ' active' : ''}`}>
                   {s.name}
                 </button>
               ))}
+              {confirmRemove ? (
+                <span role="group" aria-label="Confirm removing the tab" style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                  Remove “{sheet.name}” from this page? Later uploads leave it out too. You can undo this.
+                  <button type="button" className="btn-secondary" onClick={removeActiveTab} disabled={busy}>Yes, remove</button>
+                  <button type="button" className="btn-secondary" onClick={() => setConfirmRemove(false)} disabled={busy}>Cancel</button>
+                </span>
+              ) : (
+                <button type="button" onClick={() => setConfirmRemove(true)} disabled={busy || Boolean(pending)}
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 11, color: 'var(--muted-foreground)', cursor: 'pointer', textDecoration: 'underline' }}>
+                  Remove “{sheet.name}” tab
+                </button>
+              )}
             </div>
           )}
 
@@ -939,7 +995,7 @@ export default function SmartSheet({ title = 'Data', subtitle = '', eyebrow, sum
           </div>
 
           {activeTab === 'table' ? <DataTable key={viewKey} sheet={sheet} />
-            : Summary ? <Summary key={viewKey} workbook={workbook} fallback={<SmartChart sheet={sheet} countLabel={countLabel} />} />
+            : Summary ? <Summary key={viewKey} workbook={workbook} sheet={sheet} fallback={<SmartChart sheet={sheet} countLabel={countLabel} />} />
             : <SmartChart key={viewKey} sheet={sheet} countLabel={countLabel} />}
         </>
       )}

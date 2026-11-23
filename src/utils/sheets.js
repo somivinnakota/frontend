@@ -15,6 +15,8 @@ export const previewUpload = (title, upload, mode) => axios.post(`${url(title)}/
 export const applyUpload = (title, upload, mode) => axios.post(url(title), { upload, mode }).then(r => r.data);
 export const undoLast = title => axios.post(`${url(title)}/undo`).then(r => r.data);
 export const clearSheet = title => axios.delete(url(title)).then(r => r.data);
+// Removes one tab from the saved sheet; later uploads leave it out too. Can be undone.
+export const removeTab = (title, name) => axios.post(`${url(title)}/remove-tab`, { name }).then(r => r.data);
 
 // Just the saved workbook (or null), e.g. for the AI reports.
 export const loadSharedWorkbook = title => getSheet(title).then(d => d.workbook).catch(() => null);
