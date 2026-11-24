@@ -77,6 +77,13 @@ const paneSubStyle = { fontSize: 11, fontWeight: 400, color: 'var(--muted-foregr
 const textButtonStyle = { background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: 11, color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' };
 const dropStyle = active => (active ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {});
 
+// The calendar quarter (1-4) a paper came out in, within its listed year. Uses the date it first
+// appeared online when that is in the same year, because a journal issue date is often just
+// 1 January of the volume's year.
+const quarterOf = p => {
+  const d = p.onlineDate && p.onlineDate.slice(0, 4) === String(p.year) ? p.onlineDate : p.date;
+  return d ? Math.floor((Number(d.slice(5, 7)) - 1) / 3) + 1 : null;
+};
 const formatDate = iso => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
 // One paper in a list. It can be dragged between the two lists, and has a button that does the same.
@@ -148,6 +155,7 @@ export default function Publications() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [yearFilter, setYearFilter] = useState('all');
+  const [quarterFilter, setQuarterFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('collection');
   // Which listed researcher's papers to show. The Overview page links here with ?investigator=<id>.
   const [investigatorFilter, setInvestigatorFilter] = useState(() => new URLSearchParams(window.location.search).get('investigator') || 'all');
@@ -228,6 +236,7 @@ export default function Publications() {
   const otherFilters = p => {
     if (investigatorFilter !== 'all' && !p.investigators?.includes(investigatorFilter)) return false;
     if (yearFilter !== 'all' && String(p.year) !== yearFilter) return false;
+    if (quarterFilter !== 'all' && String(quarterOf(p)) !== quarterFilter) return false;
     if (accessFilter === 'openaccess' && !p.openAccess) return false;
     if (accessFilter === 'other' && p.openAccess) return false;
     return matches(p, words);
@@ -260,8 +269,8 @@ export default function Publications() {
             {building ? 'Updating…' : 'Refresh'}
           </button>
           <button className="btn-secondary" disabled={!data} onClick={() => downloadCsv('infant-publications.csv', [
-            ['Year', 'First published', 'Title', 'Journal', 'Authors', 'Type', 'Counted', 'Status', 'Added or removed by hand', 'Listed researchers', 'Evidence (author address)', 'Evidence source', 'DOI', 'PubMed ID', 'Open access'],
-            ...filtered.map(p => [p.year, p.date, p.title, p.journal, p.authorNames?.length ? p.authorNames.join('; ') : p.authors, p.type, p.counted ? 'Yes' : 'No', STATUS[p.status]?.label || p.status,
+            ['Year', 'Quarter', 'First published', 'Title', 'Journal', 'Authors', 'Type', 'Counted', 'Status', 'Added or removed by hand', 'Listed researchers', 'Evidence (author address)', 'Evidence source', 'DOI', 'PubMed ID', 'Open access'],
+            ...filtered.map(p => [p.year, quarterOf(p) ? `Q${quarterOf(p)}` : '', p.date, p.title, p.journal, p.authorNames?.length ? p.authorNames.join('; ') : p.authors, p.type, p.counted ? 'Yes' : 'No', STATUS[p.status]?.label || p.status,
               p.collection === 'added' ? 'Added' : p.collection === 'removed' ? 'Removed' : '', (p.investigators || []).map(id => investigatorNames[id]).filter(Boolean).join('; '),
               p.evidence, p.evidenceSource, p.doi, p.pmid, p.openAccess ? 'Yes' : 'No']),
           ])}>
@@ -376,6 +385,13 @@ export default function Publications() {
             <select aria-label="Filter by year" value={yearFilter} onChange={e => { setYearFilter(e.target.value); setShown(PAGE_SIZE); }} style={{ ...fieldStyle, cursor: 'pointer' }}>
               <option value="all">All years</option>
               {years.map(y => <option key={y} value={String(y)}>{y}</option>)}
+            </select>
+            <select aria-label="Filter by quarter" value={quarterFilter} onChange={e => { setQuarterFilter(e.target.value); setShown(PAGE_SIZE); }} style={{ ...fieldStyle, cursor: 'pointer' }}>
+              <option value="all">All quarters</option>
+              <option value="1">Q1 (Jan–Mar)</option>
+              <option value="2">Q2 (Apr–Jun)</option>
+              <option value="3">Q3 (Jul–Sep)</option>
+              <option value="4">Q4 (Oct–Dec)</option>
             </select>
             <select aria-label="Filter by access type" value={accessFilter} onChange={e => { setAccessFilter(e.target.value); setShown(PAGE_SIZE); }} style={{ ...fieldStyle, cursor: 'pointer' }}>
               <option value="all">All access</option>
